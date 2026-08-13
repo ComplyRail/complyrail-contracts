@@ -1,6 +1,6 @@
 use soroban_sdk::{contracttype, Address, String};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[contracttype]
 pub enum VaspStatus {
     Active,
@@ -8,7 +8,7 @@ pub enum VaspStatus {
     Revoked,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[contracttype]
 pub struct VaspEntry {
     pub address: Address,
@@ -19,7 +19,7 @@ pub struct VaspEntry {
     pub added_at: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[contracttype]
 pub struct ThresholdConfig {
     pub asset: Address,
@@ -27,7 +27,7 @@ pub struct ThresholdConfig {
     pub threshold_amount: i128,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[contracttype]
 pub enum PaymentStatus {
     Pending,
@@ -36,7 +36,7 @@ pub enum PaymentStatus {
     Rejected,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[contracttype]
 pub struct PaymentRecord {
     pub id: soroban_sdk::BytesN<32>,

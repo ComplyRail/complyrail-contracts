@@ -1,8 +1,6 @@
-#![allow(deprecated)]
-
 mod types;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
@@ -76,7 +74,7 @@ impl ComplyRailContract {
         thresholds.set(key, amount);
 
         env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
-        env.events().publish((symbol_short!("thresh_set"),), &asset);
+        env.events().publish((symbol_short!("thr_set"),), &asset);
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
@@ -171,7 +169,7 @@ impl ComplyRailContract {
         assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
 
-        assert!(&message_hash.as_array() != &[0u8; 32], "message_hash cannot be empty");
+        assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
 
         payment.status = PaymentStatus::Released;
         payment.attestation_hash = Some(message_hash.clone());
@@ -179,7 +177,7 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("attest_sub"),), &payment_id);
+        env.events().publish((symbol_short!("att_sub"),), &payment_id);
     }
 
     pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
