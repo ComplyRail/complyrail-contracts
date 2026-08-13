@@ -1,54 +1,16 @@
 mod types;
 
-use soroban_sdk::{contractimpl, contracttype, Address, Env, String, BytesN, Vec, symbol_short};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
-#[derive(Clone)]
-#[contracttype]
+#[contract]
 pub struct ComplyRailContract;
-
-const ADMINS: &str = "admins";
-const VASPS: &str = "vasps";
-const THRESHOLDS: &str = "thresholds";
-const PAYMENTS: &str = "payments";
-const PAYMENT_COUNTER: &str = "payment_counter";
 
 #[contractimpl]
 impl ComplyRailContract {
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
-
-        let mut admins: Vec<Address> = env.storage().instance().get(&ADMINS).unwrap_or_else(|| Vec::new(&env));
-        admins.push_back(admin);
-        env.storage().instance().set(&ADMINS, &admins);
-    }
-
-    pub fn add_admin(env: Env, caller: Address, new_admin: Address) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut admins: Vec<Address> = env.storage().instance().get(&ADMINS).unwrap_or_else(|| Vec::new(&env));
-        admins.push_back(new_admin);
-        env.storage().instance().set(&ADMINS, &admins);
-
-        env.events().publish((symbol_short!("admin_add"),), new_admin);
-    }
-
-    pub fn remove_admin(env: Env, caller: Address, admin_to_remove: Address) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let admins: Vec<Address> = env.storage().instance().get(&ADMINS).unwrap_or_else(|| Vec::new(&env));
-        let mut new_admins: Vec<Address> = Vec::new(&env);
-
-        for admin in admins.iter() {
-            if admin != admin_to_remove {
-                new_admins.push_back(admin);
-            }
-        }
-
-        env.storage().instance().set(&ADMINS, &new_admins);
-        env.events().publish((symbol_short!("admin_rem"),), admin_to_remove);
+        env.storage().instance().set(&symbol_short!("admin"), &admin);
     }
 
     pub fn register_vasp(
@@ -60,92 +22,66 @@ impl ComplyRailContract {
         public_key: BytesN<32>,
     ) {
         caller.require_auth();
-        Self::require_admin(&env, &caller);
+
+        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
+        assert!(admin == caller, "unauthorized");
 
         let entry = VaspEntry {
             address: vasp.clone(),
-            name: name.clone(),
-            jurisdiction: jurisdiction.clone(),
-            public_key: public_key.clone(),
+            name,
+            jurisdiction,
+            public_key,
             status: VaspStatus::Active,
             added_at: env.ledger().timestamp(),
         };
 
-        let mut vasps: Vec<VaspEntry> = env.storage().instance().get(&VASPS).unwrap_or_else(|| Vec::new(&env));
-        vasps.push_back(entry);
-        env.storage().instance().set(&VASPS, &vasps);
-
-        env.events().publish((symbol_short!("vasp_reg"),), (vasp, name));
+        env.storage().instance().set(&vasp, &entry);
+        env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
     pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
         caller.require_auth();
-        Self::require_admin(&env, &caller);
 
-        let mut vasps: Vec<VaspEntry> = env.storage().instance().get(&VASPS).unwrap_or_else(|| Vec::new(&env));
+        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
+        assert!(admin == caller, "unauthorized");
 
-        for entry in vasps.iter_mut() {
-            if entry.address == vasp {
-                entry.status = status;
-                break;
-            }
-        }
+        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        entry.status = status;
+        env.storage().instance().set(&vasp, &entry);
 
-        env.storage().instance().set(&VASPS, &vasps);
-        env.events().publish((symbol_short!("vasp_upd"),), (vasp.clone(), status as u32));
+        env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
     pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        let vasps: Vec<VaspEntry> = env.storage().instance().get(&VASPS).unwrap_or_else(|| Vec::new(&env));
-
-        for entry in vasps.iter() {
-            if entry.address == vasp {
-                return Some(entry);
-            }
-        }
-
-        None
+        env.storage().instance().get(&vasp)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
         caller.require_auth();
-        Self::require_admin(&env, &caller);
 
-        let config = ThresholdConfig {
-            asset: asset.clone(),
-            jurisdiction: jurisdiction.clone(),
-            threshold_amount: amount,
-        };
+        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
+        assert!(admin == caller, "unauthorized");
 
-        let mut thresholds: Vec<ThresholdConfig> = env.storage().instance().get(&THRESHOLDS).unwrap_or_else(|| Vec::new(&env));
+        let mut thresholds: Map<String, i128> = env.storage()
+            .instance()
+            .get(&symbol_short!("thresh"))
+            .unwrap_or_else(|| Map::new(&env));
 
-        let mut found = false;
-        for threshold in thresholds.iter_mut() {
-            if threshold.asset == asset && threshold.jurisdiction == jurisdiction {
-                threshold.threshold_amount = amount;
-                found = true;
-                break;
-            }
-        }
+        let key = format_threshold_key(&env, &asset, &jurisdiction);
+        thresholds.set(key, amount);
 
-        if !found {
-            thresholds.push_back(config);
-        }
-
-        env.storage().instance().set(&THRESHOLDS, &thresholds);
-        env.events().publish((symbol_short!("thresh_set"),), (asset, jurisdiction));
+        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
+        env.events().publish((symbol_short!("thresh_set"),), &asset);
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
-        let thresholds: Vec<ThresholdConfig> = env.storage().instance().get(&THRESHOLDS).unwrap_or_else(|| Vec::new(&env));
+        let thresholds: Map<String, i128> = env.storage()
+            .instance()
+            .get(&symbol_short!("thresh"))
+            .unwrap_or_else(|| Map::new(&env));
 
-        for config in thresholds.iter() {
-            if config.asset == asset && config.jurisdiction == jurisdiction {
-                return Some(config.threshold_amount);
-            }
-        }
-
-        None
+        let key = format_threshold_key(&env, &asset, &jurisdiction);
+        thresholds.get(key)
     }
 
     pub fn submit_payment(
@@ -158,17 +94,15 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
-        let vasp_from = Self::get_vasp(env.clone(), from_vasp.clone());
-        let vasp_to = Self::get_vasp(env.clone(), to_vasp.clone());
+        let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
+        let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
 
-        assert!(vasp_from.is_some(), "from_vasp not registered");
-        assert!(vasp_to.is_some(), "to_vasp not registered");
-        assert!(vasp_from.unwrap().status == VaspStatus::Active, "from_vasp not active");
-        assert!(vasp_to.unwrap().status == VaspStatus::Active, "to_vasp not active");
+        assert!(from_entry.status == VaspStatus::Active, "from_vasp not active");
+        assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
 
         let payment_id = Self::generate_payment_id(&env);
 
-        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), String::from_slice(&env, "US")) {
+        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry)) {
             if amount < threshold {
                 PaymentStatus::Released
             } else {
@@ -192,50 +126,32 @@ impl ComplyRailContract {
             resolved_at: if status == PaymentStatus::Released { Some(env.ledger().timestamp()) } else { None },
         };
 
-        let mut payments: Vec<PaymentRecord> = env.storage().instance().get(&PAYMENTS).unwrap_or_else(|| Vec::new(&env));
-        payments.push_back(payment);
-        env.storage().instance().set(&PAYMENTS, &payments);
-
-        env.events().publish((symbol_short!("pay_sub"),), (payment_id.clone(), status as u32));
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("pay_sub"),), &payment_id);
 
         payment_id
     }
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
-        let payments: Vec<PaymentRecord> = env.storage().instance().get(&PAYMENTS).unwrap_or_else(|| Vec::new(&env));
-
-        for payment in payments.iter() {
-            if payment.id == payment_id {
-                return Some(payment);
-            }
-        }
-
-        None
-    }
-
-    fn require_admin(env: &Env, caller: &Address) {
-        let admins: Vec<Address> = env.storage().instance().get(&ADMINS).unwrap_or_else(|| Vec::new(env));
-
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
-
-        assert!(is_admin, "unauthorized: caller is not an admin");
+        env.storage().instance().get(&payment_id)
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&PAYMENT_COUNTER).unwrap_or(0);
-        env.storage().instance().set(&PAYMENT_COUNTER, &(counter + 1));
+        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
 
         let mut id_bytes = [0u8; 32];
         let counter_bytes = counter.to_le_bytes();
         id_bytes[..8].copy_from_slice(&counter_bytes);
-        id_bytes[8..16].copy_from_slice(&env.ledger().timestamp().to_le_bytes());
 
         BytesN::from_array(env, &id_bytes)
     }
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    String::from_slice(env, &format!("{}:{}", asset.to_string(), jurisdiction.to_string()))
+}
+
+fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
+    vasp.jurisdiction.clone()
 }

@@ -2,9 +2,10 @@
 name = "complyrail-contracts"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-soroban-sdk = "20.5"
+soroban-sdk = "*"
 
 [lib]
 crate-type = ["cdylib"]
@@ -14,3 +15,4 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+overflow-checks = true
