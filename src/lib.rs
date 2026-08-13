@@ -1,5 +1,8 @@
 mod types;
 
+#[cfg(test)]
+mod tests;
+
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
@@ -134,6 +137,88 @@ impl ComplyRailContract {
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
         env.storage().instance().get(&payment_id)
+    }
+
+    pub fn submit_attestation(
+        env: Env,
+        caller_vasp: Address,
+        payment_id: BytesN<32>,
+        message_hash: BytesN<32>,
+        ivms_version: String,
+    ) {
+        caller_vasp.require_auth();
+
+        let mut payment: PaymentRecord = env.storage()
+            .instance()
+            .get(&payment_id)
+            .expect("payment not found");
+
+        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+
+        let to_vasp_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&payment.to_vasp)
+            .expect("to_vasp not found");
+
+        let from_vasp_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&payment.from_vasp)
+            .expect("from_vasp not found");
+
+        assert!(to_vasp_entry.status == VaspStatus::Active, "to_vasp not active");
+        assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
+        assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
+
+        assert!(&message_hash.as_array() != &[0u8; 32], "message_hash cannot be empty");
+
+        payment.status = PaymentStatus::Released;
+        payment.attestation_hash = Some(message_hash.clone());
+        payment.ivms_version = Some(ivms_version);
+        payment.resolved_at = Some(env.ledger().timestamp());
+
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("attest_sub"),), &payment_id);
+    }
+
+    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
+        caller.require_auth();
+
+        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
+        assert!(admin == caller, "only admin can release");
+
+        let mut payment: PaymentRecord = env.storage()
+            .instance()
+            .get(&payment_id)
+            .expect("payment not found");
+
+        assert!(payment.status != PaymentStatus::Released, "payment already released");
+
+        payment.status = PaymentStatus::Released;
+        payment.resolved_at = Some(env.ledger().timestamp());
+
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
+    }
+
+    pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
+        caller.require_auth();
+
+        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
+        assert!(admin == caller, "only admin can reject");
+
+        let mut payment: PaymentRecord = env.storage()
+            .instance()
+            .get(&payment_id)
+            .expect("payment not found");
+
+        assert!(payment.status != PaymentStatus::Rejected, "payment already rejected");
+        assert!(payment.status != PaymentStatus::Released, "cannot reject released payment");
+
+        payment.status = PaymentStatus::Rejected;
+        payment.resolved_at = Some(env.ledger().timestamp());
+
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
