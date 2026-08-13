@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 mod types;
 
 #[cfg(test)]
@@ -234,7 +236,9 @@ impl ComplyRailContract {
 }
 
 fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    String::from_slice(env, &format!("{}:{}", asset.to_string(), jurisdiction.to_string()))
+    let asset_str = asset.to_string();
+    let combined = format!("{}:{}", asset_str, jurisdiction);
+    String::from_str(env, &combined)
 }
 
 fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
