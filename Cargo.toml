@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-soroban-sdk = "18"
+soroban-sdk = "*"
 
 [lib]
 crate-type = ["cdylib"]
