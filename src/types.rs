@@ -17,6 +17,7 @@ pub struct VaspEntry {
     pub public_key: soroban_sdk::BytesN<32>,
     pub status: VaspStatus,
     pub added_at: u64,
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,23 @@ pub enum PaymentStatus {
     Released,
     Held,
     Rejected,
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct AdminApproval {
+    pub admin: Address,
+    pub approved_at: u64,
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PendingApproval {
+    pub operation_id: soroban_sdk::BytesN<32>,
+    pub operation_type: String,
+    pub operation_data: String,
+    pub approvals: soroban_sdk::Vec<AdminApproval>,
+    pub created_at: u64,
 }
 
 #[derive(Clone, Debug)]

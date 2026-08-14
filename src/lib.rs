@@ -13,7 +13,44 @@ pub struct ComplyRailContract;
 impl ComplyRailContract {
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
-        env.storage().instance().set(&symbol_short!("admin"), &admin);
+        let mut admins: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+        admins.push_back(admin);
+        env.storage().instance().set(&symbol_short!("admins"), &admins);
+        env.storage().instance().set(&symbol_short!("min_appr"), &1i32);
+    }
+
+    pub fn add_admin(env: Env, caller: Address, new_admin: Address) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+
+        for admin in admins.iter() {
+            assert!(admin != new_admin, "admin already exists");
+        }
+
+        admins.push_back(new_admin.clone());
+        env.storage().instance().set(&symbol_short!("admins"), &admins);
+        env.events().publish((symbol_short!("adm_add"),), &new_admin);
+    }
+
+    pub fn get_admins(env: Env) -> soroban_sdk::Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+    }
+
+    pub fn set_approval_threshold(env: Env, caller: Address, threshold: i32) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        assert!(threshold > 0, "threshold must be positive");
+        env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
+        env.events().publish((symbol_short!("appr_th"),), &threshold);
     }
 
     pub fn register_vasp(
@@ -23,11 +60,12 @@ impl ComplyRailContract {
         name: String,
         jurisdiction: String,
         public_key: BytesN<32>,
+        expiry_days: Option<u64>,
     ) {
         caller.require_auth();
+        Self::require_admin(&env, &caller);
 
-        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
-        assert!(admin == caller, "unauthorized");
+        let expiry = expiry_days.map(|days| env.ledger().timestamp() + (days * 86400));
 
         let entry = VaspEntry {
             address: vasp.clone(),
@@ -36,17 +74,28 @@ impl ComplyRailContract {
             public_key,
             status: VaspStatus::Active,
             added_at: env.ledger().timestamp(),
+            expires_at: expiry,
         };
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
-    pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
+    pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
 
-        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
-        assert!(admin == caller, "unauthorized");
+        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+
+        let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
+        entry.expires_at = Some(current_expiry + (extension_days * 86400));
+
+        env.storage().instance().set(&vasp, &entry);
+        env.events().publish((symbol_short!("vasp_renew"),), &vasp);
+    }
+
+    pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
         entry.status = status;
@@ -61,9 +110,7 @@ impl ComplyRailContract {
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
         caller.require_auth();
-
-        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
-        assert!(admin == caller, "unauthorized");
+        Self::require_admin(&env, &caller);
 
         let mut thresholds: Map<String, i128> = env.storage()
             .instance()
@@ -103,6 +150,13 @@ impl ComplyRailContract {
         assert!(from_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
 
+        if let Some(expires) = from_entry.expires_at {
+            assert!(env.ledger().timestamp() < expires, "from_vasp registration expired");
+        }
+        if let Some(expires) = to_entry.expires_at {
+            assert!(env.ledger().timestamp() < expires, "to_vasp registration expired");
+        }
+
         let payment_id = Self::generate_payment_id(&env);
 
         let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry)) {
@@ -137,6 +191,36 @@ impl ComplyRailContract {
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
         env.storage().instance().get(&payment_id)
+    }
+
+    pub fn get_payment_count(env: Env) -> u64 {
+        env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0)
+    }
+
+    pub fn get_payments_by_vasp(
+        env: Env,
+        vasp_address: Address,
+        as_sender: bool,
+    ) -> soroban_sdk::Vec<BytesN<32>> {
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let mut results = soroban_sdk::Vec::new(&env);
+
+        for i in 0..count {
+            let mut id_bytes = [0u8; 32];
+            let counter_bytes = i.to_le_bytes();
+            id_bytes[..8].copy_from_slice(&counter_bytes);
+            let payment_id = BytesN::from_array(&env, &id_bytes);
+
+            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
+                if as_sender && payment.from_vasp == vasp_address {
+                    results.push_back(payment_id);
+                } else if !as_sender && payment.to_vasp == vasp_address {
+                    results.push_back(payment_id);
+                }
+            }
+        }
+
+        results
     }
 
     pub fn submit_attestation(
@@ -182,9 +266,7 @@ impl ComplyRailContract {
 
     pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
         caller.require_auth();
-
-        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
-        assert!(admin == caller, "only admin can release");
+        Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
             .instance()
@@ -202,9 +284,7 @@ impl ComplyRailContract {
 
     pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
         caller.require_auth();
-
-        let admin: Address = env.storage().instance().get(&symbol_short!("admin")).expect("admin not set");
-        assert!(admin == caller, "only admin can reject");
+        Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
             .instance()
@@ -241,4 +321,23 @@ fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> St
 
 fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
     vasp.jurisdiction.clone()
+}
+
+impl ComplyRailContract {
+    fn require_admin(env: &Env, caller: &Address) {
+        let admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+
+        let mut is_admin = false;
+        for admin in admins.iter() {
+            if admin == *caller {
+                is_admin = true;
+                break;
+            }
+        }
+
+        assert!(is_admin, "unauthorized: not an admin");
+    }
 }
