@@ -10,8 +10,9 @@ mod tests {
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
-        let stored_admin: Address = env.storage().instance().get(&soroban_sdk::symbol_short!("admin")).unwrap();
-        assert_eq!(stored_admin, admin);
+        let stored_admins = ComplyRailContract::get_admins(env.clone());
+        assert_eq!(stored_admins.len(), 1);
+        assert_eq!(stored_admins.get(0), Some(admin));
     }
 
     #[test]
@@ -33,6 +34,7 @@ mod tests {
             name,
             jurisdiction,
             public_key.clone(),
+            None,
         );
 
         let stored_vasp = ComplyRailContract::get_vasp(env.clone(), vasp.clone());
@@ -83,6 +85,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -92,6 +95,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         // Set threshold
@@ -141,6 +145,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -150,6 +155,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         // Set threshold
@@ -177,6 +183,69 @@ mod tests {
     }
 
     #[test]
+    fn test_unconfigured_asset_and_jurisdiction_require_attestation() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+        let unconfigured_asset = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Test VASP");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            String::from_slice(&env, "US"),
+            public_key.clone(),
+            None,
+        );
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin,
+            to_vasp.clone(),
+            name,
+            String::from_slice(&env, "CA"),
+            public_key,
+            None,
+        );
+
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp,
+            to_vasp.clone(),
+            beneficiary,
+            unconfigured_asset,
+            500_0000000,
+        );
+
+        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(payment.status, PaymentStatus::Pending);
+        assert_eq!(payment.attestation_hash, None);
+        assert_eq!(payment.ivms_version, None);
+        assert_eq!(payment.resolved_at, None);
+
+        let message_hash = BytesN::from_array(&env, &[1u8; 32]);
+        let ivms_version = String::from_slice(&env, "1.0");
+        ComplyRailContract::submit_attestation(
+            env.clone(),
+            to_vasp,
+            payment_id.clone(),
+            message_hash.clone(),
+            ivms_version.clone(),
+        );
+
+        let payment = ComplyRailContract::get_payment(env, payment_id).unwrap();
+        assert_eq!(payment.status, PaymentStatus::Released);
+        assert_eq!(payment.attestation_hash, Some(message_hash));
+        assert_eq!(payment.ivms_version, Some(ivms_version));
+    }
+
+    #[test]
     fn test_attestation_release() {
         let env = Env::default();
         let admin = Address::random(&env);
@@ -198,6 +267,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -207,6 +277,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
@@ -266,6 +337,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -275,6 +347,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
@@ -320,6 +393,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -329,6 +403,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
