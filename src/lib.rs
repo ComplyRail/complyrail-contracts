@@ -307,6 +307,23 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
+    /// Remove a payment from a VASP's sender or receiver index (#66).
+    fn unindex_payment(env: &Env, vasp: &Address, as_sender: bool, payment_id: &BytesN<32>) {
+        let key = (symbol_short!("pidx"), vasp.clone(), as_sender);
+        let ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+
+        let mut kept = soroban_sdk::Vec::new(env);
+        for existing in ids.iter() {
+            if existing != *payment_id {
+                kept.push_back(existing);
+            }
+        }
+        env.storage().persistent().set(&key, &kept);
+    }
+
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
