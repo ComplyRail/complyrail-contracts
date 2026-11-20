@@ -114,12 +114,12 @@ impl ComplyRailContract {
 
         // A tuple key replaces the string built with format!, which does not compile
         // for Soroban strings (#57). Each rule is also stored on its own (#55).
-        env.storage().instance().set(&(symbol_short!("thr"), asset.clone(), jurisdiction), &amount);
+        env.storage().instance().set(&ThresholdKey { asset: asset.clone(), jurisdiction }, &amount);
         env.events().publish((symbol_short!("thr_set"),), &asset);
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
-        env.storage().instance().get(&(symbol_short!("thr"), asset, jurisdiction))
+        env.storage().instance().get(&ThresholdKey { asset, jurisdiction })
     }
 
     pub fn submit_payment(
