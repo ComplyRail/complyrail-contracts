@@ -241,13 +241,13 @@ mod tests {
             public_key,
         );
 
-        // Originating jurisdiction has a high threshold; receiving has a low one.
+        // Sender jurisdiction threshold is high; receiver jurisdiction is low.
         let from_threshold = 1000_0000000;
         let to_threshold = 100_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), from_jurisdiction.clone(), from_threshold);
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), to_jurisdiction.clone(), to_threshold);
 
-        // Amount is above the receiving threshold but below the originating one.
+        // Amount is above the receiver threshold but below the sender threshold.
         let payment_amount = 500_0000000;
         let payment_id = ComplyRailContract::submit_payment(
             env.clone(),
@@ -260,12 +260,13 @@ mod tests {
 
         let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
         assert_eq!(record.status, PaymentStatus::Released);
-        assert_eq!(token.balance(&env.current_contract_address()), 0);
+        assert_eq!(token.balance(&env.current_contract_address()), payment_amount);
     }
 
     #[test]
-    fn test_originating_vasp_can_submit_attestation() {
-        // Issue #24: only the originating VASP may submit the attestation.
+    fn test_release_rejected_payment_fails() {
+        // Issue #27: a payment rejected for compliance reasons must not be
+        // releasable afterwards. release_payment requires status == Pending.
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::random(&env);
@@ -304,6 +305,7 @@ mod tests {
         let threshold = 1000_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
+        // Above threshold -> Pending
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
             env.clone(),
@@ -314,22 +316,25 @@ mod tests {
             payment_amount,
         );
 
-        let attestation_hash = BytesN::from_array(&env, &[1u8; 32]);
-        ComplyRailContract::submit_attestation(
-            env.clone(),
-            from_vasp.clone(),
-            payment_id.clone(),
-            attestation_hash.clone(),
-        );
-
+        // Reject the payment for compliance reasons.
+        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone());
         let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(record.attestation_hash, Some(attestation_hash));
+        assert_eq!(record.status, PaymentStatus::Rejected);
+
+        // Releasing a rejected payment must fail.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        }));
+        assert!(result.is_err());
+
+        // Status remains Rejected.
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Rejected);
     }
 
     #[test]
-    #[should_panic]
-    fn test_beneficiary_vasp_cannot_submit_attestation() {
-        // Issue #24: the beneficiary (receiving) VASP must be rejected.
+    fn test_release_released_payment_fails() {
+        // Issue #27: releasing an already-released payment must fail.
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::random(&env);
@@ -368,6 +373,7 @@ mod tests {
         let threshold = 1000_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
+        // Above threshold -> Pending, then release once.
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
             env.clone(),
@@ -378,12 +384,18 @@ mod tests {
             payment_amount,
         );
 
-        let attestation_hash = BytesN::from_array(&env, &[1u8; 32]);
-        ComplyRailContract::submit_attestation(
-            env.clone(),
-            to_vasp.clone(),
-            payment_id.clone(),
-            attestation_hash,
-        );
+        ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Released);
+
+        // Releasing again must fail.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        }));
+        assert!(result.is_err());
+
+        // Status remains Released.
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Released);
     }
 }

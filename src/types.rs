@@ -37,6 +37,17 @@ pub enum PaymentStatus {
     Rejected,
 }
 
+impl PaymentStatus {
+    /// Whether a payment in this status may be released by `release_payment`.
+    ///
+    /// Only `Pending` payments are releasable. `Rejected` payments must never
+    /// be released (compliance rejection is terminal), and `Released` payments
+    /// must not be released twice.
+    pub fn is_releasable(&self) -> bool {
+        matches!(self, PaymentStatus::Pending)
+    }
+}
+
 #[derive(Clone, Debug)]
 #[contracttype]
 pub struct AdminApproval {
