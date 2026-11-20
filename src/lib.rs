@@ -65,7 +65,11 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let expiry = expiry_days.map(|days| env.ledger().timestamp() + (days * 86400));
+        let expiry = expiry_days.map(|days| {
+            days.checked_mul(86400)
+                .and_then(|secs| env.ledger().timestamp().checked_add(secs))
+                .expect("expiry overflow")
+        });
 
         let entry = VaspEntry {
             address: vasp.clone(),
@@ -87,7 +91,11 @@ impl ComplyRailContract {
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
-        entry.expires_at = Some(current_expiry + (extension_days * 86400));
+        let extension = extension_days
+            .checked_mul(86400)
+            .and_then(|secs| current_expiry.checked_add(secs))
+            .expect("expiry overflow");
+        entry.expires_at = Some(extension);
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
