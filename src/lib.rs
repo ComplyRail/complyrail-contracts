@@ -241,6 +241,11 @@ impl ComplyRailContract {
             .expect("payment not found");
 
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+        // Attestations after the payment deadline are refused (#34).
+        assert!(
+            env.ledger().timestamp() <= payment.created_at + PAYMENT_WINDOW_SECS,
+            "payment deadline has passed"
+        );
 
         let to_vasp_entry: VaspEntry = env.storage()
             .instance()
