@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn test_release_without_attestation_fails() {
+    fn test_reject_refunds_originator() {
         let env = Env::default();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
@@ -290,19 +290,72 @@ mod tests {
             payment_amount,
         );
 
-        // Payment requires attestation and has none yet.
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Pending);
-        assert_eq!(payment.attestation_hash, None);
+        // Escrow holds the originator's funds while pending.
+        let escrowed = ComplyRailContract::get_escrow_balance(env.clone(), from_vasp.clone(), asset.clone());
+        assert_eq!(escrowed, payment_amount);
 
-        // Admin release without attestation must fail.
+        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone());
+
+        // Rejection must refund the originator's escrowed amount.
+        let refunded = ComplyRailContract::get_escrow_balance(env.clone(), from_vasp.clone(), asset.clone());
+        assert_eq!(refunded, 0);
+
+        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(payment.status, PaymentStatus::Rejected);
+    }
+
+    #[test]
+    fn test_reject_twice_fails() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+        let asset = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Test VASP");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            jurisdiction.clone(),
+            public_key,
+        );
+
+        let threshold = 1000_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+
+        let payment_amount = 2000_0000000;
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            payment_amount,
+        );
+
+        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone());
+
+        // A rejected payment must not be rejectable a second time.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+            ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone());
         }));
         assert!(result.is_err());
-
-        // Payment must remain pending.
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Pending);
     }
 }

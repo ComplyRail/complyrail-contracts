@@ -78,3 +78,11 @@ pub struct PaymentReleasedEvent {
     pub admin_override: bool,
     pub override_reason: Option<String>,
 }
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PaymentRejectedEvent {
+    pub payment_id: soroban_sdk::BytesN<32>,
+    pub from_vasp: Address,
+    pub refunded_amount: i128,
+}

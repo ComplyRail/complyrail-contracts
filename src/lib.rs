@@ -235,7 +235,7 @@ impl ComplyRailContract {
         let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
 
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-        assert!(caller_vasp == payment.from_vasp, "only sender vasp can attest");
+        assert!(caller_vasp == payment.to_vasp, "only to_vasp can attest");
 
         payment.attestation_hash = Some(attestation_hash.clone());
         payment.ivms_version = Some(ivms_version.clone());
@@ -244,30 +244,14 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("attest"),), &payment_id);
     }
 
-    pub fn release_payment(
-        env: Env,
-        caller: Address,
-        payment_id: BytesN<32>,
-        override_reason: Option<String>,
-    ) {
+    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
         caller.require_auth();
+        Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
 
-        assert!(payment.status != PaymentStatus::Released, "payment already released");
-
-        let is_admin = Self::is_admin(&env, &caller);
-
-        if is_admin {
-            // Admin override requires an explicit, non-empty reason.
-            let reason = override_reason.expect("admin override requires a reason");
-            assert!(reason.len() > 0, "admin override requires a reason");
-            env.events().publish((symbol_short!("pay_ovr"),), &(payment_id.clone(), reason));
-        } else {
-            assert!(caller == payment.from_vasp, "only sender vasp or admin can release");
-            // A payment requiring attestation must have an attestation hash before release.
-            assert!(payment.attestation_hash.is_some(), "attestation required before release");
-        }
+        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+        assert!(payment.attestation_hash.is_some(), "attestation required");
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
@@ -276,44 +260,64 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("pay_rel"),), &payment_id);
     }
 
-    fn require_admin(env: &Env, caller: &Address) {
-        assert!(Self::is_admin(env, caller), "caller is not an admin");
+    pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
+
+        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+
+        payment.status = PaymentStatus::Rejected;
+        payment.resolved_at = Some(env.ledger().timestamp());
+
+        env.storage().instance().set(&payment_id, &payment);
+
+        // Refund the escrowed amount back to the originator.
+        Self::transfer_escrow(&env, &payment.asset, &payment.from_vasp, payment.amount);
+
+        env.events().publish((symbol_short!("pay_rej"),), &payment_id);
     }
 
-    fn is_admin(env: &Env, caller: &Address) -> bool {
+    fn transfer_escrow(env: &Env, asset: &Address, to: &Address, amount: i128) {
+        let token = soroban_sdk::token::Client::new(env, asset);
+        token.transfer(&env.current_contract_address(), to, &amount);
+    }
+
+    fn require_admin(env: &Env, caller: &Address) {
         let admins: soroban_sdk::Vec<Address> = env.storage()
             .instance()
             .get(&symbol_short!("admins"))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
+        let mut is_admin = false;
         for admin in admins.iter() {
-            if &admin == caller {
-                return true;
+            if admin == *caller {
+                is_admin = true;
+                break;
             }
         }
-        false
+        assert!(is_admin, "caller is not an admin");
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let next = counter + 1;
-        env.storage().instance().set(&symbol_short!("counter"), &next);
-
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         let mut id_bytes = [0u8; 32];
-        let counter_bytes = counter.to_le_bytes();
+        let counter_bytes = count.to_le_bytes();
         id_bytes[..8].copy_from_slice(&counter_bytes);
+        env.storage().instance().set(&symbol_short!("counter"), &(count + 1));
         BytesN::from_array(env, &id_bytes)
     }
 }
 
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let mut key = String::from_str(env, "thr:");
-    key = key.concat(&String::from_str(env, &asset.to_string()));
-    key = key.concat(&String::from_str(env, ":"));
-    key = key.concat(jurisdiction);
-    key
-}
-
 fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
     entry.jurisdiction.clone()
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "thr:");
+    key.append(&String::from_str(env, &asset.to_string()));
+    key.append(&String::from_str(env, ":"));
+    key.append(jurisdiction);
+    key
 }
