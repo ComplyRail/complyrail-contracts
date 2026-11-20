@@ -55,18 +55,19 @@ echo ""
 
 # Deploy contract
 echo "🚀 Deploying contract..."
-CONTRACT_ID=$(soroban contract deploy \
+DEPLOY_OUTPUT=$(soroban contract deploy \
   --wasm "$WASM_FILE" \
   --source "$ACCOUNT" \
   --network "$NETWORK" \
-  2>&1 | grep -oP 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' || echo "")
+  2>&1) || true
+
+# Extract the contract ID (strkey: C followed by 55 base32 chars)
+CONTRACT_ID=$(echo "$DEPLOY_OUTPUT" | grep -oE 'C[A-Z2-7]{55}' | head -n1 || echo "")
 
 if [ -z "$CONTRACT_ID" ]; then
+  echo "❌ Error: Could not find a contract ID in the deployment output."
   echo "⚠️  Deployment output:"
-  soroban contract deploy \
-    --wasm "$WASM_FILE" \
-    --source "$ACCOUNT" \
-    --network "$NETWORK"
+  echo "$DEPLOY_OUTPUT"
   exit 1
 fi
 
@@ -92,6 +93,30 @@ soroban contract invoke \
 
 echo "✅ Admin configured"
 echo ""
+
+# Record deployment details so the contract ID is not lost
+echo "💾 Recording deployment..."
+DEPLOYMENTS_DIR="deployments"
+mkdir -p "$DEPLOYMENTS_DIR"
+DEPLOYMENT_FILE="$DEPLOYMENTS_DIR/$NETWORK.json"
+WASM_HASH=$(sha256sum "$WASM_FILE" | cut -d' ' -f1)
+GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+cat > "$DEPLOYMENT_FILE" <<EOF
+{
+  "network": "$NETWORK",
+  "contractId": "$CONTRACT_ID",
+  "admin": "$ADMIN_ADDR",
+  "wasmHash": "$WASM_HASH",
+  "commit": "$GIT_COMMIT",
+  "deployedAt": "$DEPLOYED_AT"
+}
+EOF
+
+echo "✅ Deployment recorded in $DEPLOYMENT_FILE"
+echo ""
+
 echo "🎉 Deployment complete!"
 echo ""
 echo "Next steps:"

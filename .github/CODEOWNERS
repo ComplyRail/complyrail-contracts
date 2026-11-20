@@ -1,0 +1,20 @@
+# CODEOWNERS
+#
+# Owners are automatically requested for review when a pull request
+# touches the paths listed below. See issue #99.
+#
+# NOTE: For these rules to be enforced, branch protection must be
+# configured in the repository settings to "Require review from Code Owners".
+
+# Default owner for everything in the repo
+* @complyrail/maintainers
+
+# Contract source code
+/src/ @complyrail/maintainers
+
+# Deploy and interaction scripts
+/deploy.sh @complyrail/maintainers
+/interact.sh @complyrail/maintainers
+
+# CI/CD workflows and repository configuration
+/.github/ @complyrail/maintainers
