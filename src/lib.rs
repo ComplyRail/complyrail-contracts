@@ -125,6 +125,26 @@ impl ComplyRailContract {
         entry.status = status;
         env.storage().instance().set(&vasp, &entry);
 
+        // Pending payments touching a suspended or revoked VASP are held (#44).
+        if entry.status != VaspStatus::Active {
+            let payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+                .instance()
+                .get(&symbol_short!("pay_ids"))
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+            for payment_id in payment_ids.iter() {
+                let mut payment: PaymentRecord = env.storage()
+                    .instance()
+                    .get(&payment_id)
+                    .expect("payment not found");
+                if payment.status == PaymentStatus::Pending
+                    && (payment.from_vasp == vasp || payment.to_vasp == vasp)
+                {
+                    payment.status = PaymentStatus::Held;
+                    env.storage().instance().set(&payment_id, &payment);
+                }
+            }
+        }
+
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
@@ -208,6 +228,14 @@ impl ComplyRailContract {
         };
 
         env.storage().instance().set(&payment_id, &payment);
+
+        let mut payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .instance()
+            .get(&symbol_short!("pay_ids"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        payment_ids.push_back(payment_id.clone());
+        env.storage().instance().set(&symbol_short!("pay_ids"), &payment_ids);
+
         env.events().publish((symbol_short!("pay_sub"),), &payment_id);
 
         payment_id
