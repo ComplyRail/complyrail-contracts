@@ -32,6 +32,7 @@ pub struct ThresholdConfig {
 #[contracttype]
 pub enum PaymentStatus {
     Pending,
+    Attested,
     Released,
     Held,
     Rejected,
@@ -68,4 +69,20 @@ pub struct PaymentRecord {
     pub ivms_version: Option<String>,
     pub created_at: u64,
     pub resolved_at: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PaymentReleasedEvent {
+    pub payment_id: soroban_sdk::BytesN<32>,
+    pub admin_override: bool,
+    pub override_reason: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PaymentRejectedEvent {
+    pub payment_id: soroban_sdk::BytesN<32>,
+    pub from_vasp: Address,
+    pub refunded_amount: i128,
 }
