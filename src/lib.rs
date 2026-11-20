@@ -6,6 +6,11 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// Extend a record once it has less than this many ledgers left (#59).
+const LEDGER_TTL_THRESHOLD: u32 = 100_000;
+/// Extend a record to this many ledgers from now (#59).
+const LEDGER_TTL_EXTEND: u32 = 500_000;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -83,6 +88,8 @@ impl ComplyRailContract {
         };
 
         env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
@@ -95,6 +102,8 @@ impl ComplyRailContract {
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
         env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
@@ -105,6 +114,8 @@ impl ComplyRailContract {
         let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
         env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
