@@ -20,6 +20,15 @@ pub struct VaspEntry {
     pub expires_at: Option<u64>,
 }
 
+/// Storage key for one threshold rule. A typed struct cannot be ambiguous the
+/// way a joined string could, where `"a:b"` plus `"c"` and `"a"` plus `"b:c"` collide (#58).
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct ThresholdKey {
+    pub asset: Address,
+    pub jurisdiction: String,
+}
+
 #[derive(Clone, Debug)]
 #[contracttype]
 pub struct ThresholdConfig {

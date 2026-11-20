@@ -6,6 +6,11 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// Extend a record once it has less than this many ledgers left (#59).
+const LEDGER_TTL_THRESHOLD: u32 = 100_000;
+/// Extend a record to this many ledgers from now (#59).
+const LEDGER_TTL_EXTEND: u32 = 500_000;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -49,8 +54,13 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         assert!(threshold > 0, "threshold must be positive");
-        env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-        env.events().publish((symbol_short!("appr_th"),), &threshold);
+
+        // Emit only on an actual change, and include the old value (#60).
+        let previous: i32 = env.storage().instance().get(&symbol_short!("min_appr")).unwrap_or(0);
+        if previous != threshold {
+            env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
+            env.events().publish((symbol_short!("appr_th"),), (previous, threshold));
+        }
     }
 
     pub fn register_vasp(
@@ -77,19 +87,23 @@ impl ComplyRailContract {
             expires_at: expiry,
         };
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
@@ -97,41 +111,31 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
     pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        env.storage().instance().get(&vasp)
+        env.storage().persistent().get(&vasp)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
-
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.set(key, amount);
-
-        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
+        // A tuple key replaces the string built with format!, which does not compile
+        // for Soroban strings (#57). Each rule is also stored on its own (#55).
+        env.storage().instance().set(&ThresholdKey { asset: asset.clone(), jurisdiction }, &amount);
         env.events().publish((symbol_short!("thr_set"),), &asset);
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
-        let thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
-
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.get(key)
+        env.storage().instance().get(&ThresholdKey { asset, jurisdiction })
     }
 
     pub fn submit_payment(
@@ -311,12 +315,6 @@ impl ComplyRailContract {
 
         BytesN::from_array(env, &id_bytes)
     }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
-    String::from_str(env, &combined)
 }
 
 fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
