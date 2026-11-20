@@ -22,3 +22,64 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy 2>&1 || echo "Clippy warnings present (non-blocking)"
       - run: cargo fmt --check 2>&1 || echo "Format issues present (non-blocking)"
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --features opt
+      - name: Start local network
+        run: |
+          stellar network start local
+          stellar keys generate deployer --network local --fund
+          stellar keys generate caller --network local --fund
+          stellar keys generate vasp --network local --fund
+          stellar keys generate beneficiary --network local --fund
+      - name: Deploy contract
+        run: |
+          CONTRACT_ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/*.wasm \
+            --source deployer \
+            --network local)
+          echo "CONTRACT_ID=$CONTRACT_ID" >> "$GITHUB_ENV"
+      - name: Resolve addresses and public key
+        run: |
+          CALLER_ADDRESS=$(stellar keys address caller)
+          VASP_ADDRESS=$(stellar keys address vasp)
+          BENEFICIARY_ADDRESS=$(stellar keys address beneficiary)
+          PUBLIC_KEY=$(stellar keys show vasp --show-secret | head -n 1)
+          echo "CALLER_ADDRESS=$CALLER_ADDRESS" >> "$GITHUB_ENV"
+          echo "VASP_ADDRESS=$VASP_ADDRESS" >> "$GITHUB_ENV"
+          echo "BENEFICIARY_ADDRESS=$BENEFICIARY_ADDRESS" >> "$GITHUB_ENV"
+          echo "PUBLIC_KEY=$PUBLIC_KEY" >> "$GITHUB_ENV"
+      - name: Smoke test status
+        run: |
+          set -euo pipefail
+          ./interact.sh status
+      - name: Smoke test register-vasp
+        run: |
+          set -euo pipefail
+          ./interact.sh register-vasp \
+            --caller "$CALLER_ADDRESS" \
+            --vasp "$VASP_ADDRESS" \
+            --name "Smoke VASP" \
+            --jurisdiction "US" \
+            --public-key "$PUBLIC_KEY" \
+            --expiry-days 365
+      - name: Smoke test submit-payment
+        run: |
+          set -euo pipefail
+          ./interact.sh submit-payment \
+            --from-vasp "$CALLER_ADDRESS" \
+            --to-vasp "$VASP_ADDRESS" \
+            --beneficiary "$BENEFICIARY_ADDRESS" \
+            --asset "USDC" \
+            --amount 100
+      - name: Stop local network
+        if: always()
+        run: |
+          stellar network stop local || true
