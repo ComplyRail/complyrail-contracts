@@ -103,6 +103,22 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
+    /// Set a registration to expire `expires_in_seconds` from now (#47).
+    ///
+    /// Day-based `register_vasp` and `renew_vasp_registration` are unchanged, so
+    /// existing callers keep working.
+    pub fn set_vasp_expiry_seconds(env: Env, caller: Address, vasp: Address, expires_in_seconds: u64) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        entry.expires_at = Some(env.ledger().timestamp() + expires_in_seconds);
+        entry.updated_at = env.ledger().timestamp();
+
+        env.storage().instance().set(&vasp, &entry);
+        env.events().publish((symbol_short!("vasp_exp"),), &vasp);
+    }
+
     pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
