@@ -3,8 +3,16 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
+
+/// Errors a caller can match on, instead of a panic or a bare `None` (#46).
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ComplyError {
+    VaspNotFound = 1,
+}
 
 #[contract]
 pub struct ComplyRailContract;
@@ -107,8 +115,9 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
-    pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        env.storage().instance().get(&vasp)
+    /// Returns `VaspNotFound` instead of `None` for an unknown VASP (#46).
+    pub fn get_vasp(env: Env, vasp: Address) -> Result<VaspEntry, ComplyError> {
+        env.storage().instance().get(&vasp).ok_or(ComplyError::VaspNotFound)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
