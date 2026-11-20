@@ -352,3 +352,201 @@ mod tests {
         assert!(payment.resolved_at.is_some());
     }
 }
+
+#[cfg(test)]
+mod issue_tests {
+    use crate::*;
+    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::{Address, BytesN, Env, String};
+
+    struct Setup {
+        env: Env,
+        contract: Address,
+        admin: Address,
+    }
+
+    fn setup() -> Setup {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract = env.register_contract(None, ComplyRailContract);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract, || {
+            ComplyRailContract::initialize(env.clone(), admin.clone());
+        });
+        Setup { env, contract, admin }
+    }
+
+    fn register(s: &Setup, vasp: &Address, expiry_days: Option<u64>) {
+        s.env.as_contract(&s.contract, || {
+            ComplyRailContract::register_vasp(
+                s.env.clone(),
+                s.admin.clone(),
+                vasp.clone(),
+                String::from_str(&s.env, "VASP"),
+                String::from_str(&s.env, "US"),
+                BytesN::from_array(&s.env, &[0u8; 32]),
+                expiry_days,
+            );
+        });
+    }
+
+    fn pay(s: &Setup, from: &Address, to: &Address, asset: &Address, amount: i128) -> PaymentStatus {
+        s.env.as_contract(&s.contract, || {
+            let id = ComplyRailContract::submit_payment(
+                s.env.clone(),
+                from.clone(),
+                to.clone(),
+                Address::generate(&s.env),
+                asset.clone(),
+                amount,
+            );
+            ComplyRailContract::get_payment(s.env.clone(), id).unwrap().status
+        })
+    }
+
+    fn set_time(s: &Setup, ts: u64) {
+        s.env.ledger().with_mut(|l| l.timestamp = ts);
+    }
+
+    // Issue #81: VASP expiry at payment time
+
+    #[test]
+    #[should_panic(expected = "from_vasp registration expired")]
+    fn test_expired_originator() {
+        let s = setup();
+        let (from, to, asset) = (Address::generate(&s.env), Address::generate(&s.env), Address::generate(&s.env));
+        register(&s, &from, Some(1));
+        register(&s, &to, None);
+        set_time(&s, 86400 + 1);
+        pay(&s, &from, &to, &asset, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "to_vasp registration expired")]
+    fn test_expired_beneficiary() {
+        let s = setup();
+        let (from, to, asset) = (Address::generate(&s.env), Address::generate(&s.env), Address::generate(&s.env));
+        register(&s, &from, None);
+        register(&s, &to, Some(1));
+        set_time(&s, 86400 + 1);
+        pay(&s, &from, &to, &asset, 100);
+    }
+
+    #[test]
+    fn test_payment_one_second_before_expiry() {
+        let s = setup();
+        let (from, to, asset) = (Address::generate(&s.env), Address::generate(&s.env), Address::generate(&s.env));
+        register(&s, &from, Some(1));
+        register(&s, &to, Some(1));
+        set_time(&s, 86400 - 1);
+        assert_eq!(pay(&s, &from, &to, &asset, 100), PaymentStatus::Released);
+    }
+
+    #[test]
+    #[should_panic(expected = "from_vasp registration expired")]
+    fn test_payment_at_exact_expiry_second() {
+        let s = setup();
+        let (from, to, asset) = (Address::generate(&s.env), Address::generate(&s.env), Address::generate(&s.env));
+        register(&s, &from, Some(1));
+        register(&s, &to, Some(1));
+        set_time(&s, 86400);
+        pay(&s, &from, &to, &asset, 100);
+    }
+
+    // Issue #82: admin add and duplicate detection
+
+    #[test]
+    fn test_add_admin() {
+        let s = setup();
+        let new_admin = Address::generate(&s.env);
+        s.env.as_contract(&s.contract, || {
+            ComplyRailContract::add_admin(s.env.clone(), s.admin.clone(), new_admin.clone());
+            let admins = ComplyRailContract::get_admins(s.env.clone());
+            assert_eq!(admins.len(), 2);
+            assert!(admins.contains(&new_admin));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "admin already exists")]
+    fn test_add_duplicate_admin() {
+        let s = setup();
+        let new_admin = Address::generate(&s.env);
+        s.env.as_contract(&s.contract, || {
+            ComplyRailContract::add_admin(s.env.clone(), s.admin.clone(), new_admin.clone());
+            ComplyRailContract::add_admin(s.env.clone(), s.admin.clone(), new_admin.clone());
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized: not an admin")]
+    fn test_non_admin_cannot_add_admin() {
+        let s = setup();
+        let outsider = Address::generate(&s.env);
+        let new_admin = Address::generate(&s.env);
+        s.env.as_contract(&s.contract, || {
+            ComplyRailContract::add_admin(s.env.clone(), outsider, new_admin);
+        });
+    }
+
+    // Issue #83: overflow in expiry arithmetic
+
+    #[test]
+    #[should_panic(expected = "expiry overflow")]
+    fn test_register_expiry_overflow() {
+        let s = setup();
+        let vasp = Address::generate(&s.env);
+        register(&s, &vasp, Some(u64::MAX));
+    }
+
+    #[test]
+    #[should_panic(expected = "expiry overflow")]
+    fn test_renew_expiry_overflow() {
+        let s = setup();
+        let vasp = Address::generate(&s.env);
+        register(&s, &vasp, Some(1));
+        s.env.as_contract(&s.contract, || {
+            ComplyRailContract::renew_vasp_registration(s.env.clone(), s.admin.clone(), vasp, u64::MAX);
+        });
+    }
+
+    // Issue #84: threshold comparison at the boundary
+
+    #[test]
+    fn test_threshold_boundary_property() {
+        let s = setup();
+        let (from, to, asset) = (Address::generate(&s.env), Address::generate(&s.env), Address::generate(&s.env));
+        register(&s, &from, None);
+        register(&s, &to, None);
+
+        // Simple deterministic pseudo-random generator (xorshift), no extra dependencies.
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        for _ in 0..50 {
+            let threshold = (next() % 1_000_000_000_000) as i128 + 1;
+            let amount = (next() % 2_000_000_000_000) as i128;
+
+            s.env.as_contract(&s.contract, || {
+                ComplyRailContract::set_threshold(
+                    s.env.clone(),
+                    s.admin.clone(),
+                    asset.clone(),
+                    String::from_str(&s.env, "US"),
+                    threshold,
+                );
+            });
+
+            let expected = if amount < threshold { PaymentStatus::Released } else { PaymentStatus::Pending };
+            assert_eq!(pay(&s, &from, &to, &asset, amount), expected);
+            assert_eq!(pay(&s, &from, &to, &asset, threshold - 1), PaymentStatus::Released);
+            assert_eq!(pay(&s, &from, &to, &asset, threshold), PaymentStatus::Pending);
+            assert_eq!(pay(&s, &from, &to, &asset, threshold + 1), PaymentStatus::Pending);
+        }
+    }
+}

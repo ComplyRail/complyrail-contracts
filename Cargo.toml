@@ -16,3 +16,6 @@ lto = true
 codegen-units = 1
 strip = true
 overflow-checks = true
+
+[profile.test]
+overflow-checks = true
