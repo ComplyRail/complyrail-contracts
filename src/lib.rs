@@ -75,6 +75,7 @@ impl ComplyRailContract {
             status: VaspStatus::Active,
             added_at: env.ledger().timestamp(),
             expires_at: expiry,
+            updated_at: env.ledger().timestamp(),
         };
 
         env.storage().instance().set(&vasp, &entry);
@@ -88,6 +89,7 @@ impl ComplyRailContract {
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
+        entry.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
@@ -99,6 +101,7 @@ impl ComplyRailContract {
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
         entry.status = status;
+        entry.updated_at = env.ledger().timestamp();
         env.storage().instance().set(&vasp, &entry);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
