@@ -277,6 +277,15 @@ impl ComplyRailContract {
         assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
 
+        // Expired registrations cannot attest, matching submit_payment (#42).
+        let now = env.ledger().timestamp();
+        if let Some(expires) = to_vasp_entry.expires_at {
+            assert!(now < expires, "to_vasp registration expired");
+        }
+        if let Some(expires) = from_vasp_entry.expires_at {
+            assert!(now < expires, "from_vasp registration expired");
+        }
+
         assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
 
         payment.status = PaymentStatus::Released;
