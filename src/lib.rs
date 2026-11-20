@@ -78,7 +78,31 @@ impl ComplyRailContract {
         };
 
         env.storage().instance().set(&vasp, &entry);
+
+        // Keep an enumerable index of registered VASPs (#41).
+        let mut vasps: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("vasps"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        let mut known = false;
+        for existing in vasps.iter() {
+            if existing == vasp {
+                known = true;
+            }
+        }
+        if !known {
+            vasps.push_back(vasp.clone());
+            env.storage().instance().set(&symbol_short!("vasps"), &vasps);
+        }
+
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
+    }
+
+    pub fn list_vasps(env: Env) -> soroban_sdk::Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("vasps"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
