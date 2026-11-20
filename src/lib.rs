@@ -66,6 +66,8 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
+        assert!(public_key.to_array() != [0u8; 32], "public key must not be all zeros");
+
         let expiry = expiry_days.map(|days| env.ledger().timestamp() + (days * 86400));
 
         let entry = VaspEntry {
@@ -230,33 +232,31 @@ impl ComplyRailContract {
             .get(&symbol_short!("admins"))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-        let mut found = false;
+        let mut is_admin = false;
         for admin in admins.iter() {
             if &admin == caller {
-                found = true;
+                is_admin = true;
                 break;
             }
         }
-        assert!(found, "caller is not an admin");
+        assert!(is_admin, "caller is not an admin");
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let next = count + 1;
-        env.storage().instance().set(&symbol_short!("counter"), &next);
-
         let mut id_bytes = [0u8; 32];
         let counter_bytes = count.to_le_bytes();
         id_bytes[..8].copy_from_slice(&counter_bytes);
+        env.storage().instance().set(&symbol_short!("counter"), &(count + 1));
         BytesN::from_array(env, &id_bytes)
     }
 }
 
 fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
     let mut key = String::from_str(env, "thr:");
-    key.append(&String::from_str(env, &asset.to_string()));
-    key.append(&String::from_str(env, ":"));
-    key.append(jurisdiction);
+    key = key.concat(&String::from_str(env, &asset.to_string()));
+    key = key.concat(&String::from_str(env, ":"));
+    key = key.concat(jurisdiction);
     key
 }
 
