@@ -263,6 +263,12 @@ impl ComplyRailContract {
 
         assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
 
+        // IVMS version is a short version tag, such as "1.0" (#36).
+        assert!(
+            ivms_version.len() > 0 && ivms_version.len() <= 16,
+            "ivms_version must be 1 to 16 bytes"
+        );
+
         // An existing attestation is never overwritten (#35).
         assert!(payment.attestation_hash.is_none(), "payment already attested");
 
