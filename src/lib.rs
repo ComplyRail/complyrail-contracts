@@ -136,6 +136,24 @@ impl ComplyRailContract {
         thresholds.get(key)
     }
 
+    /// Remove a threshold rule, so the asset and jurisdiction no longer have one (#54).
+    pub fn remove_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut thresholds: Map<String, i128> = env.storage()
+            .instance()
+            .get(&symbol_short!("thresh"))
+            .unwrap_or_else(|| Map::new(&env));
+
+        let key = format_threshold_key(&env, &asset, &jurisdiction);
+        assert!(thresholds.contains_key(key.clone()), "threshold not found");
+        thresholds.remove(key);
+
+        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
+        env.events().publish((symbol_short!("thr_del"),), (asset, jurisdiction));
+    }
+
     pub fn submit_payment(
         env: Env,
         from_vasp: Address,
