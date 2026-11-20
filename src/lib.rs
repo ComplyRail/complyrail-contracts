@@ -291,7 +291,10 @@ impl ComplyRailContract {
         payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
+        env.events().publish(
+            (symbol_short!("pay_rel"),),
+            (payment_id.clone(), caller.clone(), payment.amount, reason),
+        );
     }
 
     pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
@@ -311,7 +314,10 @@ impl ComplyRailContract {
         payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
+        env.events().publish(
+            (symbol_short!("pay_rej"),),
+            (payment_id.clone(), caller.clone(), payment.amount, reason),
+        );
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
