@@ -3,7 +3,10 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fuzz_tests;
+
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, Map, String};
 use types::*;
 
 #[contract]
@@ -90,7 +93,7 @@ impl ComplyRailContract {
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
         env.storage().instance().set(&vasp, &entry);
-        env.events().publish((symbol_short!("vasp_renew"),), &vasp);
+        env.events().publish((symbol_short!("vasp_rnw"),), &vasp);
     }
 
     pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
@@ -108,7 +111,13 @@ impl ComplyRailContract {
         env.storage().instance().get(&vasp)
     }
 
-    pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
+    pub fn set_threshold(
+        env: Env,
+        caller: Address,
+        asset: Address,
+        jurisdiction: String,
+        amount: i128,
+    ) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
@@ -144,8 +153,14 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
-        let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
-        let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
+        let from_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&from_vasp)
+            .expect("from_vasp not registered");
+        let to_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&to_vasp)
+            .expect("to_vasp not registered");
 
         assert!(from_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
@@ -159,7 +174,9 @@ impl ComplyRailContract {
 
         let payment_id = Self::generate_payment_id(&env);
 
-        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry)) {
+        let status = if let Some(threshold) =
+            Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry))
+        {
             if amount < threshold {
                 PaymentStatus::Released
             } else {
@@ -176,11 +193,15 @@ impl ComplyRailContract {
             beneficiary: beneficiary.clone(),
             asset: asset.clone(),
             amount,
-            status: status.clone(),
+            status,
             attestation_hash: None,
             ivms_version: None,
             created_at: env.ledger().timestamp(),
-            resolved_at: if status == PaymentStatus::Released { Some(env.ledger().timestamp()) } else { None },
+            resolved_at: if status == PaymentStatus::Released {
+                Some(env.ledger().timestamp())
+            } else {
+                None
+            },
         };
 
         env.storage().instance().set(&payment_id, &payment);
@@ -212,9 +233,12 @@ impl ComplyRailContract {
             let payment_id = BytesN::from_array(&env, &id_bytes);
 
             if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
+                let party = if as_sender {
+                    &payment.from_vasp
+                } else {
+                    &payment.to_vasp
+                };
+                if *party == vasp_address {
                     results.push_back(payment_id);
                 }
             }
@@ -253,7 +277,7 @@ impl ComplyRailContract {
         assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
 
-        assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
+        assert!(message_hash.to_array() != [0u8; 32], "message_hash cannot be empty");
 
         payment.status = PaymentStatus::Released;
         payment.attestation_hash = Some(message_hash.clone());
@@ -315,7 +339,7 @@ impl ComplyRailContract {
 
 fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
     let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
+    let combined = format!("{asset_str}:{jurisdiction}");
     String::from_str(env, &combined)
 }
 

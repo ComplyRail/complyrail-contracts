@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use soroban_sdk::{Address, Env, BytesN, String};
+    use soroban_sdk::{Address, BytesN, Env, String};
 
     #[test]
     fn test_initialize() {
@@ -10,7 +10,10 @@ mod tests {
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
-        let stored_admin: Address = env.storage().instance().get(&soroban_sdk::symbol_short!("admin")).unwrap();
+        let stored_admin: Address = env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("admin"))
+            .unwrap();
         assert_eq!(stored_admin, admin);
     }
 
@@ -54,9 +57,16 @@ mod tests {
         let jurisdiction = String::from_slice(&env, "US");
         let threshold = 1000_0000000; // 1000 in stroops
 
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
-        let stored_threshold = ComplyRailContract::get_threshold(env.clone(), asset.clone(), jurisdiction.clone());
+        let stored_threshold =
+            ComplyRailContract::get_threshold(env.clone(), asset.clone(), jurisdiction.clone());
         assert_eq!(stored_threshold, Some(threshold));
     }
 
@@ -96,7 +106,13 @@ mod tests {
 
         // Set threshold
         let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
         // Submit payment below threshold
         let payment_amount = 500_0000000;
@@ -154,7 +170,13 @@ mod tests {
 
         // Set threshold
         let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
         // Submit payment above threshold
         let payment_amount = 2000_0000000;
@@ -210,7 +232,13 @@ mod tests {
         );
 
         let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
@@ -278,7 +306,13 @@ mod tests {
         );
 
         let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
@@ -332,7 +366,13 @@ mod tests {
         );
 
         let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        ComplyRailContract::set_threshold(
+            env.clone(),
+            admin.clone(),
+            asset.clone(),
+            jurisdiction.clone(),
+            threshold,
+        );
 
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
