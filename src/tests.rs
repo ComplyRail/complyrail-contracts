@@ -2,6 +2,13 @@
 mod tests {
     use crate::*;
     use soroban_sdk::{Address, Env, BytesN, String};
+    use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
+
+    fn setup_token<'a>(env: &Env, admin: &Address) -> (Address, TokenClient<'a>) {
+        let token_id = env.register_stellar_asset_contract(admin.clone());
+        let token = TokenClient::new(env, &token_id);
+        (token_id, token)
+    }
 
     #[test]
     fn test_initialize() {
@@ -63,13 +70,17 @@ mod tests {
     #[test]
     fn test_below_threshold_auto_release() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
         let to_vasp = Address::random(&env);
         let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
 
         // Register VASPs
         let name = String::from_slice(&env, "Test VASP");
@@ -116,18 +127,26 @@ mod tests {
         let record = payment.unwrap();
         assert_eq!(record.status, PaymentStatus::Released);
         assert_eq!(record.amount, payment_amount);
+
+        // Tokens moved from from_vasp into the contract escrow
+        assert_eq!(token.balance(&from_vasp), 10_000_0000000 - payment_amount);
+        assert_eq!(token.balance(&env.current_contract_address()), payment_amount);
     }
 
     #[test]
     fn test_above_threshold_pending() {
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
         let to_vasp = Address::random(&env);
         let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
 
         // Register VASPs
         let name = String::from_slice(&env, "Test VASP");
@@ -174,18 +193,92 @@ mod tests {
         let record = payment.unwrap();
         assert_eq!(record.status, PaymentStatus::Pending);
         assert_eq!(record.amount, payment_amount);
+
+        // Tokens are held in escrow by the contract
+        assert_eq!(token.balance(&from_vasp), 10_000_0000000 - payment_amount);
+        assert_eq!(token.balance(&env.current_contract_address()), payment_amount);
     }
 
     #[test]
-    fn test_attestation_release() {
+    fn test_threshold_uses_originating_vasp_jurisdiction() {
+        // Issue #23: the threshold lookup is governed by the ORIGINATING VASP's
+        // jurisdiction (matching complyrail-app), not the receiving VASP's.
+        // Here the two VASPs are in different jurisdictions with different
+        // thresholds; the payment must be evaluated against the sender's.
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
         let to_vasp = Address::random(&env);
         let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
+
+        let name = String::from_slice(&env, "Test VASP");
+        let from_jurisdiction = String::from_slice(&env, "US");
+        let to_jurisdiction = String::from_slice(&env, "EU");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            from_jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            to_jurisdiction.clone(),
+            public_key,
+        );
+
+        // Sender jurisdiction threshold is high; receiver jurisdiction is low.
+        let from_threshold = 1000_0000000;
+        let to_threshold = 100_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), from_jurisdiction.clone(), from_threshold);
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), to_jurisdiction.clone(), to_threshold);
+
+        // Amount is above the receiver threshold but below the sender threshold.
+        let payment_amount = 500_0000000;
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            payment_amount,
+        );
+
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Released);
+        assert_eq!(token.balance(&env.current_contract_address()), payment_amount);
+    }
+
+    #[test]
+    fn test_release_rejected_payment_fails() {
+        // Issue #27: a payment rejected for compliance reasons must not be
+        // releasable afterwards. release_payment requires status == Pending.
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, _token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
 
         let name = String::from_slice(&env, "Test VASP");
         let jurisdiction = String::from_slice(&env, "US");
@@ -212,6 +305,7 @@ mod tests {
         let threshold = 1000_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
+        // Above threshold -> Pending
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
             env.clone(),
@@ -222,38 +316,37 @@ mod tests {
             payment_amount,
         );
 
-        assert_eq!(
-            ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap().status,
-            PaymentStatus::Pending
-        );
+        // Reject the payment for compliance reasons.
+        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone());
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Rejected);
 
-        let message_hash = BytesN::from_array(&env, &[1u8; 32]);
-        let ivms_version = String::from_slice(&env, "1.0");
+        // Releasing a rejected payment must fail.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        }));
+        assert!(result.is_err());
 
-        ComplyRailContract::submit_attestation(
-            env.clone(),
-            to_vasp.clone(),
-            payment_id.clone(),
-            message_hash.clone(),
-            ivms_version.clone(),
-        );
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert_eq!(payment.attestation_hash, Some(message_hash));
-        assert_eq!(payment.ivms_version, Some(ivms_version));
+        // Status remains Rejected.
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Rejected);
     }
 
     #[test]
-    fn test_admin_release() {
+    fn test_release_released_payment_fails() {
+        // Issue #27: releasing an already-released payment must fail.
         let env = Env::default();
+        env.mock_all_auths();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
         let to_vasp = Address::random(&env);
         let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, _token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
 
         let name = String::from_slice(&env, "Test VASP");
         let jurisdiction = String::from_slice(&env, "US");
@@ -280,6 +373,7 @@ mod tests {
         let threshold = 1000_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
+        // Above threshold -> Pending, then release once.
         let payment_amount = 2000_0000000;
         let payment_id = ComplyRailContract::submit_payment(
             env.clone(),
@@ -290,65 +384,18 @@ mod tests {
             payment_amount,
         );
 
-        let reason = String::from_slice(&env, "Manual override");
-        ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
+        ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Released);
 
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert!(payment.resolved_at.is_some());
-    }
+        // Releasing again must fail.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone());
+        }));
+        assert!(result.is_err());
 
-    #[test]
-    fn test_reject_payment() {
-        let env = Env::default();
-        let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Test VASP");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
-            name,
-            jurisdiction.clone(),
-            public_key,
-        );
-
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
-
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
-        );
-
-        let reason = String::from_slice(&env, "Compliance check failed");
-        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Rejected);
-        assert!(payment.resolved_at.is_some());
+        // Status remains Released.
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.status, PaymentStatus::Released);
     }
 }

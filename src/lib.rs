@@ -3,7 +3,7 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
+use soroban_sdk::{contract, contractimpl, token, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
 #[contract]
@@ -157,9 +157,18 @@ impl ComplyRailContract {
             assert!(env.ledger().timestamp() < expires, "to_vasp registration expired");
         }
 
+        // Move funds into escrow before recording the payment. If the transfer
+        // fails, the whole call aborts and no payment is recorded.
+        let token_client = token::Client::new(&env, &asset);
+        token_client.transfer(&from_vasp, &env.current_contract_address(), &amount);
+
         let payment_id = Self::generate_payment_id(&env);
 
-        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry)) {
+        // The originating VASP's jurisdiction governs the threshold lookup.
+        // The originator is the party that initiates and is responsible for the
+        // transfer, and this matches the sibling `complyrail-app` contract so the
+        // same payment is held/released consistently across both systems.
+        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&from_entry)) {
             if amount < threshold {
                 PaymentStatus::Released
             } else {
@@ -208,14 +217,17 @@ impl ComplyRailContract {
         for i in 0..count {
             let mut id_bytes = [0u8; 32];
             let counter_bytes = i.to_le_bytes();
-            id_bytes[..8].copy_from_slice(&counter_bytes);
-            let payment_id = BytesN::from_array(&env, &id_bytes);
+            id_bytes[24..32].copy_from_slice(&counter_bytes);
+            let id = BytesN::from_array(&env, &id_bytes);
 
-            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
-                    results.push_back(payment_id);
+            if let Some(payment) = env.storage().instance().get::<BytesN<32>, PaymentRecord>(&id) {
+                let matches = if as_sender {
+                    payment.from_vasp == vasp_address
+                } else {
+                    payment.to_vasp == vasp_address
+                };
+                if matches {
+                    results.push_back(id);
                 }
             }
         }
@@ -223,107 +235,26 @@ impl ComplyRailContract {
         results
     }
 
-    pub fn submit_attestation(
-        env: Env,
-        caller_vasp: Address,
-        payment_id: BytesN<32>,
-        message_hash: BytesN<32>,
-        ivms_version: String,
-    ) {
-        caller_vasp.require_auth();
+    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
 
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
+        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
 
+        // Only a Pending payment may be released. Rejected payments must never
+        // be released, and an already-Released payment cannot be released again.
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
 
-        let to_vasp_entry: VaspEntry = env.storage()
-            .instance()
-            .get(&payment.to_vasp)
-            .expect("to_vasp not found");
-
-        let from_vasp_entry: VaspEntry = env.storage()
-            .instance()
-            .get(&payment.from_vasp)
-            .expect("from_vasp not found");
-
-        assert!(to_vasp_entry.status == VaspStatus::Active, "to_vasp not active");
-        assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
-        assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
-
-        assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
-
-        payment.status = PaymentStatus::Released;
-        payment.attestation_hash = Some(message_hash.clone());
-        payment.ivms_version = Some(ivms_version);
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("att_sub"),), &payment_id);
-    }
-
-    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
-
-        assert!(payment.status != PaymentStatus::Released, "payment already released");
+        let token_client = token::Client::new(&env, &payment.asset);
+        token_client.transfer(&env.current_contract_address(), &payment.beneficiary, &payment.amount);
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
+        env.events().publish((symbol_short!("pay_rel"),), &payment_id);
     }
 
-    pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
-
-        assert!(payment.status != PaymentStatus::Rejected, "payment already rejected");
-        assert!(payment.status != PaymentStatus::Released, "cannot reject released payment");
-
-        payment.status = PaymentStatus::Rejected;
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
-    }
-
-    fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
-
-        let mut id_bytes = [0u8; 32];
-        let counter_bytes = counter.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
-
-        BytesN::from_array(env, &id_bytes)
-    }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
-    String::from_str(env, &combined)
-}
-
-fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
-    vasp.jurisdiction.clone()
-}
-
-impl ComplyRailContract {
     fn require_admin(env: &Env, caller: &Address) {
         let admins: soroban_sdk::Vec<Address> = env.storage()
             .instance()
@@ -332,12 +263,34 @@ impl ComplyRailContract {
 
         let mut is_admin = false;
         for admin in admins.iter() {
-            if admin == *caller {
+            if &admin == caller {
                 is_admin = true;
                 break;
             }
         }
-
-        assert!(is_admin, "unauthorized: not an admin");
+        assert!(is_admin, "caller is not an admin");
     }
+
+    fn generate_payment_id(env: &Env) -> BytesN<32> {
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = count + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
+        let mut id_bytes = [0u8; 32];
+        let counter_bytes = count.to_le_bytes();
+        id_bytes[24..32].copy_from_slice(&counter_bytes);
+        BytesN::from_array(env, &id_bytes)
+    }
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "thr:");
+    key = key.concat(&String::from_str(env, &asset.to_string()));
+    key = key.concat(&String::from_str(env, ":"));
+    key = key.concat(jurisdiction);
+    key
+}
+
+fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
+    entry.jurisdiction.clone()
 }

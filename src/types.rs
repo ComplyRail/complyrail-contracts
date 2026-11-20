@@ -37,6 +37,17 @@ pub enum PaymentStatus {
     Rejected,
 }
 
+impl PaymentStatus {
+    /// Whether a payment in this status may be released by `release_payment`.
+    ///
+    /// Only `Pending` payments are releasable. `Rejected` payments must never
+    /// be released (compliance rejection is terminal), and `Released` payments
+    /// must not be released twice.
+    pub fn is_releasable(&self) -> bool {
+        matches!(self, PaymentStatus::Pending)
+    }
+}
+
 #[derive(Clone, Debug)]
 #[contracttype]
 pub struct AdminApproval {
@@ -68,4 +79,23 @@ pub struct PaymentRecord {
     pub ivms_version: Option<String>,
     pub created_at: u64,
     pub resolved_at: Option<u64>,
+}
+
+/// Which VASP's jurisdiction governs the threshold lookup for a payment.
+///
+/// The originating (sending) VASP's jurisdiction is authoritative: the
+/// sending VASP is the entity that initiates the transfer and is responsible
+/// for applying its own travel-rule threshold before funds leave. This matches
+/// the sibling `complyrail-app` contract so the same payment is held or
+/// released consistently across both systems.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[contracttype]
+pub enum ThresholdJurisdiction {
+    Originating,
+    Receiving,
+}
+
+impl ThresholdJurisdiction {
+    /// The jurisdiction rule used by `submit_payment` for threshold lookup.
+    pub const RULE: ThresholdJurisdiction = ThresholdJurisdiction::Originating;
 }
