@@ -144,6 +144,8 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
+        assert!(from_vasp != to_vasp, "from_vasp and to_vasp must differ");
+
         let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
         let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
 
@@ -225,99 +227,6 @@ impl ComplyRailContract {
 
     pub fn submit_attestation(
         env: Env,
-        caller_vasp: Address,
-        payment_id: BytesN<32>,
-        attestation_hash: BytesN<32>,
-        ivms_version: String,
-    ) {
-        caller_vasp.require_auth();
+        caller_vasp: Addr
 
-        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
-
-        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-        assert!(caller_vasp == payment.to_vasp, "only to_vasp can attest");
-
-        payment.attestation_hash = Some(attestation_hash.clone());
-        payment.ivms_version = Some(ivms_version.clone());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("attest"),), &payment_id);
-    }
-
-    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
-
-        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-        assert!(payment.attestation_hash.is_some(), "attestation required");
-
-        payment.status = PaymentStatus::Released;
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rel"),), &payment_id);
-    }
-
-    pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
-
-        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-
-        payment.status = PaymentStatus::Rejected;
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-
-        // Refund the escrowed amount back to the originator.
-        Self::transfer_escrow(&env, &payment.asset, &payment.from_vasp, payment.amount);
-
-        env.events().publish((symbol_short!("pay_rej"),), &payment_id);
-    }
-
-    fn transfer_escrow(env: &Env, asset: &Address, to: &Address, amount: i128) {
-        let token = soroban_sdk::token::Client::new(env, asset);
-        token.transfer(&env.current_contract_address(), to, &amount);
-    }
-
-    fn require_admin(env: &Env, caller: &Address) {
-        let admins: soroban_sdk::Vec<Address> = env.storage()
-            .instance()
-            .get(&symbol_short!("admins"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
-        assert!(is_admin, "caller is not an admin");
-    }
-
-    fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let mut id_bytes = [0u8; 32];
-        let counter_bytes = count.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
-        env.storage().instance().set(&symbol_short!("counter"), &(count + 1));
-        BytesN::from_array(env, &id_bytes)
-    }
-}
-
-fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
-    entry.jurisdiction.clone()
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let mut key = String::from_str(env, "thr:");
-    key.append(&String::from_str(env, &asset.to_string()));
-    key.append(&String::from_str(env, ":"));
-    key.append(jurisdiction);
-    key
-}
+/* … truncated 3631 chars — edit only what you need near the top … */
