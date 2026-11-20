@@ -49,8 +49,13 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         assert!(threshold > 0, "threshold must be positive");
-        env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-        env.events().publish((symbol_short!("appr_th"),), &threshold);
+
+        // Emit only on an actual change, and include the old value (#60).
+        let previous: i32 = env.storage().instance().get(&symbol_short!("min_appr")).unwrap_or(0);
+        if previous != threshold {
+            env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
+            env.events().publish((symbol_short!("appr_th"),), (previous, threshold));
+        }
     }
 
     pub fn register_vasp(
