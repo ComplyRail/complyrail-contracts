@@ -6,6 +6,11 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// Extend an entry once it has less than this many ledgers left (#64).
+const LEDGER_TTL_THRESHOLD: u32 = 100_000;
+/// Extend an entry to this many ledgers from now (#64).
+const LEDGER_TTL_EXTEND: u32 = 500_000;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -78,6 +83,7 @@ impl ComplyRailContract {
         };
 
         env.storage().persistent().set(&vasp, &entry);
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
@@ -90,6 +96,7 @@ impl ComplyRailContract {
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
         env.storage().persistent().set(&vasp, &entry);
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
@@ -100,6 +107,7 @@ impl ComplyRailContract {
         let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
         env.storage().persistent().set(&vasp, &entry);
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
@@ -184,6 +192,7 @@ impl ComplyRailContract {
         };
 
         env.storage().persistent().set(&payment_id, &payment);
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         Self::index_payment(&env, &from_vasp, true, &payment_id);
         Self::index_payment(&env, &to_vasp, false, &payment_id);
         env.events().publish((symbol_short!("pay_sub"),), &payment_id);
@@ -267,6 +276,7 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().persistent().set(&payment_id, &payment);
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("att_sub"),), &payment_id);
     }
 
@@ -285,6 +295,7 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().persistent().set(&payment_id, &payment);
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
     }
 
@@ -304,6 +315,7 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().persistent().set(&payment_id, &payment);
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
@@ -316,11 +328,13 @@ impl ComplyRailContract {
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
         ids.push_back(payment_id.clone());
         env.storage().persistent().set(&key, &ids);
+        env.storage().persistent().extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
+        env.storage().instance().extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         let mut id_bytes = [0u8; 32];
         let counter_bytes = counter.to_le_bytes();
