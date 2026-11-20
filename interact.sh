@@ -3,8 +3,26 @@ set -e
 
 # ComplyRail Contracts Interaction Script
 
-NETWORK="${1:-testnet}"
-ACTION="${2:-status}"
+# Parse flags out of the positional arguments
+DRY_RUN=0
+ASSUME_YES=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --yes|-y)
+      ASSUME_YES=1
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
+
+NETWORK="${POSITIONAL[0]:-testnet}"
+ACTION="${POSITIONAL[1]:-status}"
 
 if [ -z "$CONTRACT_ID" ]; then
   echo "❌ Error: CONTRACT_ID not set"
@@ -23,12 +41,44 @@ fi
 
 echo "📋 Contract: $CONTRACT_ID"
 echo "🌐 Network: $NETWORK"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "🧪 Dry run: commands will be printed, not executed"
+fi
 echo ""
+
+# Confirmation prompt before irreversible public (mainnet) actions
+if [ "$NETWORK" = "public" ]; then
+  echo "⚠️  WARNING: You are about to perform an action on the PUBLIC (mainnet) network."
+  echo "📋 Contract ID: $CONTRACT_ID"
+  echo "👤 Admin: ${ADMIN_ADDRESS:-${STELLAR_ACCOUNT:-alice}}"
+  echo "🎬 Action: $ACTION"
+  echo ""
+  if [ "$ASSUME_YES" -eq 1 ]; then
+    echo "✅ --yes passed, skipping confirmation"
+  else
+    printf "Type 'public' to confirm: "
+    read -r CONFIRMATION
+    if [ "$CONFIRMATION" != "public" ]; then
+      echo "❌ Confirmation failed (got '$CONFIRMATION'). Aborting."
+      exit 1
+    fi
+  fi
+  echo ""
+fi
+
+# Run a soroban command, or just print it in dry-run mode
+run_soroban() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] soroban $*"
+  else
+    soroban "$@"
+  fi
+}
 
 case "$ACTION" in
   status)
     echo "Getting contract status..."
-    soroban contract invoke \
+    run_soroban contract invoke \
       --id "$CONTRACT_ID" \
       --source alice \
       --network "$NETWORK" \
@@ -36,13 +86,13 @@ case "$ACTION" in
     ;;
 
   register-vasp)
-    VASP_ADDRESS="${3:-GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX}"
-    JURISDICTION="${4:-US}"
+    VASP_ADDRESS="${POSITIONAL[2]:-GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
     echo "Registering VASP..."
     echo "Address: $VASP_ADDRESS"
     echo "Jurisdiction: $JURISDICTION"
 
-    soroban contract invoke \
+    run_soroban contract invoke \
       --id "$CONTRACT_ID" \
       --source alice \
       --network "$NETWORK" \
@@ -54,18 +104,18 @@ case "$ACTION" in
     ;;
 
   submit-payment)
-    FROM_VASP="${3:-GXXXXXXX1}"
-    TO_VASP="${4:-GXXXXXXX2}"
-    AMOUNT="${5:-1000}"
-    ASSET="${6:-GXXXXXXX3}"
-    DATA_HASH="${7:-0000000000000000000000000000000000000000000000000000000000000000}"
+    FROM_VASP="${POSITIONAL[2]:-GXXXXXXX1}"
+    TO_VASP="${POSITIONAL[3]:-GXXXXXXX2}"
+    AMOUNT="${POSITIONAL[4]:-1000}"
+    ASSET="${POSITIONAL[5]:-GXXXXXXX3}"
+    DATA_HASH="${POSITIONAL[6]:-0000000000000000000000000000000000000000000000000000000000000000}"
 
     echo "Submitting payment..."
     echo "From: $FROM_VASP"
     echo "To: $TO_VASP"
     echo "Amount: $AMOUNT"
 
-    soroban contract invoke \
+    run_soroban contract invoke \
       --id "$CONTRACT_ID" \
       --source alice \
       --network "$NETWORK" \
@@ -80,11 +130,11 @@ case "$ACTION" in
     ;;
 
   get-threshold)
-    ASSET="${3:-GXXXXXXX}"
-    JURISDICTION="${4:-US}"
+    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
     echo "Getting threshold..."
 
-    soroban contract invoke \
+    run_soroban contract invoke \
       --id "$CONTRACT_ID" \
       --source alice \
       --network "$NETWORK" \
@@ -94,12 +144,12 @@ case "$ACTION" in
     ;;
 
   set-threshold)
-    ASSET="${3:-GXXXXXXX}"
-    JURISDICTION="${4:-US}"
-    AMOUNT="${5:-100000}"
+    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
+    AMOUNT="${POSITIONAL[4]:-100000}"
     echo "Setting threshold..."
 
-    soroban contract invoke \
+    run_soroban contract invoke \
       --id "$CONTRACT_ID" \
       --source alice \
       --network "$NETWORK" \
@@ -112,7 +162,11 @@ case "$ACTION" in
     ;;
 
   *)
-    echo "Usage: ./interact.sh [testnet|public] [action] [args...]"
+    echo "Usage: ./interact.sh [--dry-run] [--yes] [testnet|public] [action] [args...]"
+    echo ""
+    echo "Flags:"
+    echo "  --dry-run               - Print soroban commands instead of executing them"
+    echo "  --yes                   - Skip the confirmation prompt for public actions"
     echo ""
     echo "Actions:"
     echo "  status                  - Get contract info"
@@ -125,6 +179,7 @@ case "$ACTION" in
     echo "  ./interact.sh testnet status"
     echo "  ./interact.sh testnet register-vasp GXXXXXXX US"
     echo "  ./interact.sh testnet submit-payment GXXXXXXX1 GXXXXXXX2 5000"
+    echo "  ./interact.sh --dry-run public set-threshold GXXXXXXX US 100000"
     exit 1
     ;;
 esac
