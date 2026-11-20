@@ -112,6 +112,8 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
+        assert!(amount >= 0, "threshold must not be negative");
+
         let mut thresholds: Map<String, i128> = env.storage()
             .instance()
             .get(&symbol_short!("thresh"))
