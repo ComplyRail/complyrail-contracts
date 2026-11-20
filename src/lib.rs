@@ -6,6 +6,9 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// How long a payment may stay pending before it can no longer be attested (#33).
+const PAYMENT_WINDOW_SECS: u64 = 7 * 86400;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -238,6 +241,11 @@ impl ComplyRailContract {
             .expect("payment not found");
 
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+        // Attestations after the payment deadline are refused (#34).
+        assert!(
+            env.ledger().timestamp() <= payment.created_at + PAYMENT_WINDOW_SECS,
+            "payment deadline has passed"
+        );
 
         let to_vasp_entry: VaspEntry = env.storage()
             .instance()
@@ -254,6 +262,15 @@ impl ComplyRailContract {
         assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
 
         assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
+
+        // IVMS version is a short version tag, such as "1.0" (#36).
+        assert!(
+            ivms_version.len() > 0 && ivms_version.len() <= 16,
+            "ivms_version must be 1 to 16 bytes"
+        );
+
+        // An existing attestation is never overwritten (#35).
+        assert!(payment.attestation_hash.is_none(), "payment already attested");
 
         payment.status = PaymentStatus::Released;
         payment.attestation_hash = Some(message_hash.clone());
@@ -299,6 +316,29 @@ impl ComplyRailContract {
 
         env.storage().instance().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
+    }
+
+    /// Let the sender reclaim a payment whose attestation window has passed (#33).
+    pub fn reclaim_payment(env: Env, from_vasp: Address, payment_id: BytesN<32>) {
+        from_vasp.require_auth();
+
+        let mut payment: PaymentRecord = env.storage()
+            .instance()
+            .get(&payment_id)
+            .expect("payment not found");
+
+        assert!(payment.from_vasp == from_vasp, "only the sender can reclaim");
+        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+        assert!(
+            env.ledger().timestamp() > payment.created_at + PAYMENT_WINDOW_SECS,
+            "payment deadline has not passed"
+        );
+
+        payment.status = PaymentStatus::Rejected;
+        payment.resolved_at = Some(env.ledger().timestamp());
+
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("pay_rec"),), &payment_id);
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
