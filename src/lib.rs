@@ -184,6 +184,8 @@ impl ComplyRailContract {
         };
 
         env.storage().persistent().set(&payment_id, &payment);
+        Self::index_payment(&env, &from_vasp, true, &payment_id);
+        Self::index_payment(&env, &to_vasp, false, &payment_id);
         env.events().publish((symbol_short!("pay_sub"),), &payment_id);
 
         payment_id
@@ -202,25 +204,11 @@ impl ComplyRailContract {
         vasp_address: Address,
         as_sender: bool,
     ) -> soroban_sdk::Vec<BytesN<32>> {
-        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let mut results = soroban_sdk::Vec::new(&env);
-
-        for i in 0..count {
-            let mut id_bytes = [0u8; 32];
-            let counter_bytes = i.to_le_bytes();
-            id_bytes[..8].copy_from_slice(&counter_bytes);
-            let payment_id = BytesN::from_array(&env, &id_bytes);
-
-            if let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
-                    results.push_back(payment_id);
-                }
-            }
-        }
-
-        results
+        // Read the per-VASP index instead of scanning every payment (#62).
+        env.storage()
+            .persistent()
+            .get(&(symbol_short!("pidx"), vasp_address, as_sender))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
     }
 
     pub fn submit_attestation(
@@ -299,6 +287,17 @@ impl ComplyRailContract {
 
         env.storage().persistent().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
+    }
+
+    /// Add a payment to a VASP's sender or receiver index (#62).
+    fn index_payment(env: &Env, vasp: &Address, as_sender: bool, payment_id: &BytesN<32>) {
+        let key = (symbol_short!("pidx"), vasp.clone(), as_sender);
+        let mut ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        ids.push_back(payment_id.clone());
+        env.storage().persistent().set(&key, &ids);
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
