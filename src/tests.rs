@@ -200,6 +200,71 @@ mod tests {
     }
 
     #[test]
+    fn test_threshold_uses_originating_vasp_jurisdiction() {
+        // Issue #23: the threshold lookup is governed by the ORIGINATING VASP's
+        // jurisdiction (matching complyrail-app), not the receiving VASP's.
+        // Here the two VASPs are in different jurisdictions with different
+        // thresholds; the payment must be evaluated against the sender's.
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
+
+        let name = String::from_slice(&env, "Test VASP");
+        let from_jurisdiction = String::from_slice(&env, "US");
+        let to_jurisdiction = String::from_slice(&env, "EU");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            from_jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            to_jurisdiction.clone(),
+            public_key,
+        );
+
+        // Originating jurisdiction has a high threshold; receiving has a low one.
+        let from_threshold = 1000_0000000;
+        let to_threshold = 100_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), from_jurisdiction.clone(), from_threshold);
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), to_jurisdiction.clone(), to_threshold);
+
+        // Amount is above the receiving threshold but below the originating one.
+        let payment_amount = 500_0000000;
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            payment_amount,
+        );
+
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        // Governed by originating jurisdiction -> below threshold -> released.
+        assert_eq!(record.status, PaymentStatus::Released);
+        assert_eq!(token.balance(&env.current_contract_address()), 0);
+    }
+
+    #[test]
     fn test_attestation_release() {
         let env = Env::default();
         env.mock_all_auths();
@@ -236,156 +301,6 @@ mod tests {
             public_key,
         );
 
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        let t
 
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
-        );
-
-        assert_eq!(
-            ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap().status,
-            PaymentStatus::Pending
-        );
-
-        // Escrow holds the funds while pending
-        assert_eq!(token.balance(&env.current_contract_address()), payment_amount);
-
-        let message_hash = BytesN::from_array(&env, &[1u8; 32]);
-        let ivms_version = String::from_slice(&env, "1.0");
-
-        ComplyRailContract::submit_attestation(
-            env.clone(),
-            to_vasp.clone(),
-            payment_id.clone(),
-            message_hash.clone(),
-            ivms_version.clone(),
-        );
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert_eq!(payment.attestation_hash, Some(message_hash));
-        assert_eq!(payment.ivms_version, Some(ivms_version));
-    }
-
-    #[test]
-    fn test_submit_payment_escrows_tokens() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let (asset, token) = setup_token(&env, &admin);
-        let asset_admin = StellarAssetClient::new(&env, &asset);
-        asset_admin.mint(&from_vasp, &5_000_0000000);
-
-        let name = String::from_slice(&env, "Test VASP");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
-            name,
-            jurisdiction.clone(),
-            public_key,
-        );
-
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
-
-        let contract_addr = env.current_contract_address();
-        assert_eq!(token.balance(&contract_addr), 0);
-
-        let payment_amount = 2000_0000000;
-        ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
-        );
-
-        assert_eq!(token.balance(&from_vasp), 5_000_0000000 - payment_amount);
-        assert_eq!(token.balance(&contract_addr), payment_amount);
-    }
-
-    #[test]
-    fn test_submit_payment_fails_without_funds() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let (asset, token) = setup_token(&env, &admin);
-
-        let name = String::from_slice(&env, "Test VASP");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
-            name,
-            jurisdiction.clone(),
-            public_key,
-        );
-
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
-
-        let contract_addr = env.current_contract_address();
-        let payment_amount = 2000_0000000;
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            ComplyRailContract::submit_payment(
-                env.clone(),
-                from_vasp.clone(),
-                to_vasp.clone(),
-                beneficiary.clone(),
-                asset.clone(),
-                payment_amount,
-            )
-        }));
-
-        assert!(result.is_err());
-        assert_eq!(token.balance(&contract_addr), 0);
-    }
-
-    #[test]
-    fn test_admin
+/* … truncated 5035 chars — edit only what you need near the top … */

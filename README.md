@@ -14,6 +14,12 @@ ComplyRail contracts implement an on-chain compliance layer for Stellar anchors 
 - **Multi-Admin**: Require multiple admins for sensitive operations
 - **Event Audit Trail**: Every state change emits events for off-chain indexing
 
+## Threshold Jurisdiction Rule
+
+When `submit_payment` decides whether a payment must be held in escrow, it looks up the threshold using the **originating VASP's jurisdiction** (the `from` VASP), not the receiving VASP's.
+
+Rationale: the Travel Rule obligation is imposed on the originating VASP, which is the party that must collect and transmit originator information before the transfer is released. Gating on the originator's jurisdiction keeps the escrow decision aligned with the obligation that triggers it, and matches the sibling `complyrail-app` contract so the same payment cannot be held in one system and released in the other.
+
 ## License
 
 Apache License 2.0 — see LICENSE file.

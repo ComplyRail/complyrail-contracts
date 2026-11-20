@@ -164,7 +164,11 @@ impl ComplyRailContract {
 
         let payment_id = Self::generate_payment_id(&env);
 
-        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&to_entry)) {
+        // The originating VASP's jurisdiction governs the threshold lookup.
+        // The originator is the party that initiates and is responsible for the
+        // transfer, and this matches the sibling `complyrail-app` contract so the
+        // same payment is held/released consistently across both systems.
+        let status = if let Some(threshold) = Self::get_threshold(env.clone(), asset.clone(), jurisdiction_from_vasp(&from_entry)) {
             if amount < threshold {
                 PaymentStatus::Released
             } else {
@@ -228,8 +232,42 @@ impl ComplyRailContract {
         results
     }
 
-    pub fn submit_attestation(
-        env: Env,
-        caller_vasp: Addr
+    fn require_admin(env: &Env, caller: &Address) {
+        let admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-/* … truncated 4135 chars — edit only what you need near the top … */
+        let mut is_admin = false;
+        for admin in admins.iter() {
+            if &admin == caller {
+                is_admin = true;
+                break;
+            }
+        }
+        assert!(is_admin, "caller is not an admin");
+    }
+
+    fn generate_payment_id(env: &Env) -> BytesN<32> {
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = count + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
+        let mut id_bytes = [0u8; 32];
+        let counter_bytes = count.to_le_bytes();
+        id_bytes[..8].copy_from_slice(&counter_bytes);
+        BytesN::from_array(env, &id_bytes)
+    }
+}
+
+fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
+    entry.jurisdiction.clone()
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "");
+    key = key.concat(&String::from_str(env, &asset.to_string()));
+    key = key.concat(&String::from_str(env, ":"));
+    key = key.concat(jurisdiction);
+    key
+}

@@ -69,3 +69,22 @@ pub struct PaymentRecord {
     pub created_at: u64,
     pub resolved_at: Option<u64>,
 }
+
+/// Which VASP's jurisdiction governs the threshold lookup for a payment.
+///
+/// The originating (sending) VASP's jurisdiction is authoritative: the
+/// sending VASP is the entity that initiates the transfer and is responsible
+/// for applying its own travel-rule threshold before funds leave. This matches
+/// the sibling `complyrail-app` contract so the same payment is held or
+/// released consistently across both systems.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[contracttype]
+pub enum ThresholdJurisdiction {
+    Originating,
+    Receiving,
+}
+
+impl ThresholdJurisdiction {
+    /// The jurisdiction rule used by `submit_payment` for threshold lookup.
+    pub const RULE: ThresholdJurisdiction = ThresholdJurisdiction::Originating;
+}
