@@ -307,21 +307,31 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
-    /// Remove a payment from a VASP's sender or receiver index (#66).
-    fn unindex_payment(env: &Env, vasp: &Address, as_sender: bool, payment_id: &BytesN<32>) {
-        let key = (symbol_short!("pidx"), vasp.clone(), as_sender);
-        let ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    /// Remove resolved payments from active storage (#66).
+    ///
+    /// The admin lists the payment IDs. Only released or rejected payments are
+    /// removed. Returns how many payments were removed.
+    pub fn prune_resolved_payments(
+        env: Env,
+        caller: Address,
+        payment_ids: soroban_sdk::Vec<BytesN<32>>,
+    ) -> u32 {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
 
-        let mut kept = soroban_sdk::Vec::new(env);
-        for existing in ids.iter() {
-            if existing != *payment_id {
-                kept.push_back(existing);
+        let mut pruned = 0u32;
+        for payment_id in payment_ids.iter() {
+            let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) else {
+                continue;
+            };
+            if payment.status != PaymentStatus::Released && payment.status != PaymentStatus::Rejected {
+                continue;
             }
+
+            env.storage().persistent().remove(&payment_id);
+            pruned += 1;
         }
-        env.storage().persistent().set(&key, &kept);
+        pruned
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
