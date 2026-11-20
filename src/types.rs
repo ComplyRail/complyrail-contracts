@@ -32,6 +32,7 @@ pub struct ThresholdConfig {
 #[contracttype]
 pub enum PaymentStatus {
     Pending,
+    Attested,
     Released,
     Held,
     Rejected,
