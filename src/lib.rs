@@ -6,6 +6,9 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// Upper bound on admins, so the admin list cannot grow without limit (#67).
+const MAX_ADMINS: u32 = 16;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -14,6 +17,7 @@ impl ComplyRailContract {
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
         let mut admins: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+        env.storage().instance().set(&(symbol_short!("admin"), admin.clone()), &true);
         admins.push_back(admin);
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.storage().instance().set(&symbol_short!("min_appr"), &1i32);
@@ -32,6 +36,8 @@ impl ComplyRailContract {
             assert!(admin != new_admin, "admin already exists");
         }
 
+        assert!(admins.len() < MAX_ADMINS, "admin list is full");
+        env.storage().instance().set(&(symbol_short!("admin"), new_admin.clone()), &true);
         admins.push_back(new_admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.events().publish((symbol_short!("adm_add"),), &new_admin);
@@ -301,6 +307,33 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
+    /// Remove resolved payments from active storage (#66).
+    ///
+    /// The admin lists the payment IDs. Only released or rejected payments are
+    /// removed. Returns how many payments were removed.
+    pub fn prune_resolved_payments(
+        env: Env,
+        caller: Address,
+        payment_ids: soroban_sdk::Vec<BytesN<32>>,
+    ) -> u32 {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut pruned = 0u32;
+        for payment_id in payment_ids.iter() {
+            let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) else {
+                continue;
+            };
+            if payment.status != PaymentStatus::Released && payment.status != PaymentStatus::Rejected {
+                continue;
+            }
+
+            env.storage().persistent().remove(&payment_id);
+            pruned += 1;
+        }
+        pruned
+    }
+
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
@@ -325,18 +358,11 @@ fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
 
 impl ComplyRailContract {
     fn require_admin(env: &Env, caller: &Address) {
-        let admins: soroban_sdk::Vec<Address> = env.storage()
+        // A keyed lookup instead of a scan of the admin list (#68).
+        let is_admin: bool = env.storage()
             .instance()
-            .get(&symbol_short!("admins"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
+            .get(&(symbol_short!("admin"), caller.clone()))
+            .unwrap_or(false);
 
         assert!(is_admin, "unauthorized: not an admin");
     }
