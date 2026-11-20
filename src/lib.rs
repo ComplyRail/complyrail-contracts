@@ -70,6 +70,8 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
+        assert!(!Self::is_admin(&env, &vasp), "admin cannot be registered as vasp");
+
         let expiry = expiry_days.map(|days| env.ledger().timestamp() + (days * 86400));
 
         let entry = VaspEntry {
@@ -162,6 +164,9 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
+        assert!(!Self::is_admin(&env, &from_vasp), "from_vasp cannot be an admin");
+        assert!(!Self::is_admin(&env, &to_vasp), "to_vasp cannot be an admin");
+
         let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
         let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
 
@@ -226,61 +231,6 @@ impl ComplyRailContract {
         for i in 0..count {
             let mut id_bytes = [0u8; 32];
             let counter_bytes = i.to_le_bytes();
-            id_bytes[..8].copy_from_slice(&counter_bytes);
-            let payment_id = BytesN::from_array(&env, &id_bytes);
+            id_bytes[..8].co
 
-            if let Some(payment) = env.storage().instance().get::<BytesN<32>, PaymentRecord>(&payment_id) {
-                let matches = if as_sender {
-                    payment.from_vasp == vasp_address
-                } else {
-                    payment.to_vasp == vasp_address
-                };
-                if matches {
-                    results.push_back(payment_id);
-                }
-            }
-        }
-
-        results
-    }
-
-    fn require_admin(env: &Env, caller: &Address) {
-        assert!(Self::is_admin(env, caller), "unauthorized: caller is not an admin");
-    }
-
-    fn is_admin(env: &Env, caller: &Address) -> bool {
-        let admins: soroban_sdk::Vec<Address> = env.storage()
-            .instance()
-            .get(&symbol_short!("admins"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-        for admin in admins.iter() {
-            if &admin == caller {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let next = counter + 1;
-        env.storage().instance().set(&symbol_short!("counter"), &next);
-
-        let mut id_bytes = [0u8; 32];
-        let counter_bytes = counter.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
-        BytesN::from_array(env, &id_bytes)
-    }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let mut key = String::from_str(env, "thr:");
-    key.append(&asset.to_string());
-    key.append(&String::from_str(env, ":"));
-    key.append(jurisdiction);
-    key
-}
-
-fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
-    entry.jurisdiction.clone()
-}
+/* … truncated 1881 chars — edit only what you need near the top … */
