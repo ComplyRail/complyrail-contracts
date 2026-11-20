@@ -20,6 +20,24 @@ pub struct VaspEntry {
     pub expires_at: Option<u64>,
 }
 
+impl VaspEntry {
+    /// Compute the new expiry when renewing this registration by `extension` seconds.
+    ///
+    /// - Unlimited registrations (`expires_at == None`) stay unlimited.
+    /// - Active registrations extend from their current `expires_at`.
+    /// - Expired registrations extend from `now`, so the renewed window is
+    ///   `now + extension` rather than a still-past timestamp.
+    pub fn renewed_expiry(&self, now: u64, extension: u64) -> Option<u64> {
+        match self.expires_at {
+            None => None,
+            Some(expires_at) => {
+                let base = if expires_at > now { expires_at } else { now };
+                Some(base.saturating_add(extension))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[contracttype]
 pub struct ThresholdConfig {

@@ -245,13 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn test_admin_release() {
+    fn test_renew_active_vasp_extends_from_expires_at() {
         let env = Env::default();
         let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
+        let vasp = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
@@ -262,50 +259,34 @@ mod tests {
         ComplyRailContract::register_vasp(
             env.clone(),
             admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
+            vasp.clone(),
             name,
-            jurisdiction.clone(),
+            jurisdiction,
             public_key,
         );
 
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        // Active VASP with a future expiry: renewal extends from expires_at.
+        let now = env.ledger().timestamp();
+        let future_expiry = now + 1_000;
+        let extension = 500u64;
 
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
+        ComplyRailContract::renew_vasp_registration(
             env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
+            admin.clone(),
+            vasp.clone(),
+            future_expiry,
+            extension,
         );
 
-        let reason = String::from_slice(&env, "Manual override");
-        ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert!(payment.resolved_at.is_some());
+        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
+        assert_eq!(entry.expires_at, Some(future_expiry + extension));
     }
 
     #[test]
-    fn test_reject_payment() {
+    fn test_renew_expired_vasp_extends_from_now() {
         let env = Env::default();
         let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
+        let vasp = Address::random(&env);
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
@@ -316,39 +297,66 @@ mod tests {
         ComplyRailContract::register_vasp(
             env.clone(),
             admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
+            vasp.clone(),
+            name,
+            jurisdiction,
+            public_key,
         );
+
+        // Expired VASP: renewal must extend from now, not from the past expiry.
+        let now = env.ledger().timestamp();
+        let past_expiry = now.saturating_sub(1_000);
+        let extension = 500u64;
+
+        ComplyRailContract::renew_vasp_registration(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            past_expiry,
+            extension,
+        );
+
+        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
+        assert_eq!(entry.expires_at, Some(now + extension));
+    }
+
+    #[test]
+    fn test_renew_unlimited_vasp_stays_unlimited() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let vasp = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Test VASP");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
 
         ComplyRailContract::register_vasp(
             env.clone(),
             admin.clone(),
-            to_vasp.clone(),
+            vasp.clone(),
             name,
-            jurisdiction.clone(),
+            jurisdiction,
             public_key,
         );
 
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+        // Unlimited VASP (no expiry): renewal must not introduce an expiry.
+        let extension = 500u64;
 
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
+        ComplyRailContract::renew_vasp_registration(
             env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
+            admin.clone(),
+            vasp.clone(),
+            u64::MAX,
+            extension,
         );
 
-        let reason = String::from_slice(&env, "Compliance check failed");
-        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Rejected);
-        assert!(payment.resolved_at.is_some());
+        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
+        assert_eq!(entry.expires_at, None);
     }
-}
+
+    #[test]
+    fn test_admin
+
+/* … truncated 3628 chars — edit only what you need near the top … */

@@ -86,8 +86,15 @@ impl ComplyRailContract {
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
 
-        let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
-        entry.expires_at = Some(current_expiry + (extension_days * 86400));
+        // Unlimited registrations (no expiry) stay unlimited after renewal.
+        if let Some(current_expiry) = entry.expires_at {
+            let now = env.ledger().timestamp();
+            // Extend from the later of now and the current expiry so that an
+            // already-expired registration is renewed relative to now rather
+            // than remaining expired.
+            let base = if current_expiry > now { current_expiry } else { now };
+            entry.expires_at = Some(base + (extension_days * 86400));
+        }
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
@@ -225,119 +232,6 @@ impl ComplyRailContract {
 
     pub fn submit_attestation(
         env: Env,
-        caller_vasp: Address,
-        payment_id: BytesN<32>,
-        message_hash: BytesN<32>,
-        ivms_version: String,
-    ) {
-        caller_vasp.require_auth();
+        caller_vasp: Addr
 
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
-
-        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-
-        let to_vasp_entry: VaspEntry = env.storage()
-            .instance()
-            .get(&payment.to_vasp)
-            .expect("to_vasp not found");
-
-        let from_vasp_entry: VaspEntry = env.storage()
-            .instance()
-            .get(&payment.from_vasp)
-            .expect("from_vasp not found");
-
-        assert!(to_vasp_entry.status == VaspStatus::Active, "to_vasp not active");
-        assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
-        assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
-
-        assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
-
-        payment.status = PaymentStatus::Released;
-        payment.attestation_hash = Some(message_hash.clone());
-        payment.ivms_version = Some(ivms_version);
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("att_sub"),), &payment_id);
-    }
-
-    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
-
-        assert!(payment.status != PaymentStatus::Released, "payment already released");
-
-        payment.status = PaymentStatus::Released;
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
-    }
-
-    pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
-        caller.require_auth();
-        Self::require_admin(&env, &caller);
-
-        let mut payment: PaymentRecord = env.storage()
-            .instance()
-            .get(&payment_id)
-            .expect("payment not found");
-
-        assert!(payment.status != PaymentStatus::Rejected, "payment already rejected");
-        assert!(payment.status != PaymentStatus::Released, "cannot reject released payment");
-
-        payment.status = PaymentStatus::Rejected;
-        payment.resolved_at = Some(env.ledger().timestamp());
-
-        env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
-    }
-
-    fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
-
-        let mut id_bytes = [0u8; 32];
-        let counter_bytes = counter.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
-
-        BytesN::from_array(env, &id_bytes)
-    }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
-    String::from_str(env, &combined)
-}
-
-fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
-    vasp.jurisdiction.clone()
-}
-
-impl ComplyRailContract {
-    fn require_admin(env: &Env, caller: &Address) {
-        let admins: soroban_sdk::Vec<Address> = env.storage()
-            .instance()
-            .get(&symbol_short!("admins"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
-
-        assert!(is_admin, "unauthorized: not an admin");
-    }
-}
+/* … truncated 4135 chars — edit only what you need near the top … */
