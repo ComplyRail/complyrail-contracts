@@ -221,6 +221,14 @@ impl ComplyRailContract {
         env.storage().instance().get(&payment_id)
     }
 
+    /// Outcome of a payment and when it was resolved, without the full record (#45).
+    pub fn get_payment_status(env: Env, payment_id: BytesN<32>) -> Option<(PaymentStatus, Option<u64>)> {
+        env.storage()
+            .instance()
+            .get::<_, PaymentRecord>(&payment_id)
+            .map(|payment| (payment.status, payment.resolved_at))
+    }
+
     pub fn get_payment_count(env: Env) -> u64 {
         env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0)
     }
