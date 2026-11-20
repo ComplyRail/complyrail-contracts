@@ -17,6 +17,7 @@ impl ComplyRailContract {
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();
         let mut admins: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+        env.storage().instance().set(&(symbol_short!("admin"), admin.clone()), &true);
         admins.push_back(admin);
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.storage().instance().set(&symbol_short!("min_appr"), &1i32);
@@ -36,6 +37,7 @@ impl ComplyRailContract {
         }
 
         assert!(admins.len() < MAX_ADMINS, "admin list is full");
+        env.storage().instance().set(&(symbol_short!("admin"), new_admin.clone()), &true);
         admins.push_back(new_admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.events().publish((symbol_short!("adm_add"),), &new_admin);
@@ -329,18 +331,11 @@ fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
 
 impl ComplyRailContract {
     fn require_admin(env: &Env, caller: &Address) {
-        let admins: soroban_sdk::Vec<Address> = env.storage()
+        // A keyed lookup instead of a scan of the admin list (#68).
+        let is_admin: bool = env.storage()
             .instance()
-            .get(&symbol_short!("admins"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
+            .get(&(symbol_short!("admin"), caller.clone()))
+            .unwrap_or(false);
 
         assert!(is_admin, "unauthorized: not an admin");
     }
