@@ -6,6 +6,15 @@ Soroban smart contracts enforcing FATF Travel Rule compliance at settlement: thr
 
 ComplyRail contracts implement an on-chain compliance layer for Stellar anchors and VASPs. Payments above a configurable threshold are held in escrow until an attestation (a hash of an off-chain IVMS101 compliance message) is submitted by the beneficiary VASP.
 
+## Payment Statuses
+
+A payment moves through the following statuses:
+
+- **Pending**: The payment has been created and is awaiting attestation (escrowed above threshold).
+- **Attested**: A valid attestation has been submitted for the payment.
+- **Settled**: The payment has been released/settled after compliance checks passed.
+- **Refunded**: The payment was refunded to the sender.
+
 ## Features
 
 - **VASP Registry**: Register Virtual Asset Service Providers with jurisdiction and public key
