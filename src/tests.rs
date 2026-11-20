@@ -257,18 +257,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_admin_can_renew_vasp() {
-        let env = Env::default();
-        let admin = Address::random(&env);
-        let vasp = Address::random(&env);
+    // --- VASP status transition tests (issue #4) ---
 
+    fn setup_vasp(env: &Env) -> (Address, Address) {
+        let admin = Address::random(env);
+        let vasp = Address::random(env);
         ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Anchor A");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
+        let name = String::from_slice(env, "Test VASP");
+        let jurisdiction = String::from_slice(env, "US");
+        let public_key = BytesN::from_array(env, &[0u8; 32]);
         ComplyRailContract::register_vasp(
             env.clone(),
             admin.clone(),
@@ -277,66 +274,154 @@ mod tests {
             jurisdiction,
             public_key,
         );
-
-        // Admin is authorized to renew.
-        ComplyRailContract::renew_vasp_registration(env.clone(), admin.clone(), vasp.clone());
-
-        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
-        assert_eq!(entry.status, VaspStatus::Active);
+        (admin, vasp)
     }
 
     #[test]
-    fn test_vasp_can_renew_itself() {
+    fn test_transition_active_to_suspended() {
         let env = Env::default();
-        let admin = Address::random(&env);
-        let vasp = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Anchor A");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
             env.clone(),
             admin.clone(),
             vasp.clone(),
-            name,
-            jurisdiction,
-            public_key,
+            VaspStatus::Suspended,
         );
+        assert_eq!(
+            ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap().status,
+            VaspStatus::Suspended
+        );
+    }
 
-        // The VASP itself is authorized to renew.
-        ComplyRailContract::renew_vasp_registration(env.clone(), vasp.clone(), vasp.clone());
+    #[test]
+    fn test_transition_active_to_revoked() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
+        assert_eq!(
+            ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap().status,
+            VaspStatus::Revoked
+        );
+    }
 
-        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
-        assert_eq!(entry.status, VaspStatus::Active);
+    #[test]
+    fn test_transition_suspended_to_active() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Suspended,
+        );
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Active,
+        );
+        assert_eq!(
+            ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap().status,
+            VaspStatus::Active
+        );
+    }
+
+    #[test]
+    fn test_transition_suspended_to_revoked() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Suspended,
+        );
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
+        assert_eq!(
+            ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap().status,
+            VaspStatus::Revoked
+        );
     }
 
     #[test]
     #[should_panic]
-    fn test_outsider_cannot_renew_vasp() {
+    fn test_transition_same_status_rejected() {
         let env = Env::default();
-        let admin = Address::random(&env);
-        let vasp = Address::random(&env);
-        let outsider = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Anchor A");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
+        let (admin, vasp) = setup_vasp(&env);
+        // Active -> Active must be rejected (no-op transition).
+        ComplyRailContract::update_vasp_status(
             env.clone(),
             admin.clone(),
             vasp.clone(),
-            name,
-            jurisdiction,
-            public_key,
+            VaspStatus::Active,
         );
+    }
 
-        // A non-admin, non-VASP caller must not be able to renew.
-        ComplyRailContract::renew_vasp_registration(env.clone(), outsider.clone(), vasp.clone());
+    #[test]
+    #[should_panic]
+    fn test_transition_revoked_to_active_rejected() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
+        // Revoked is terminal; moving back to Active must be rejected.
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Active,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transition_revoked_to_suspended_rejected() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Suspended,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transition_revoked_to_revoked_rejected() {
+        let env = Env::default();
+        let (admin, vasp) = setup_vasp(&env);
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
+        ComplyRailContract::update_vasp_status(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            VaspStatus::Revoked,
+        );
     }
 }

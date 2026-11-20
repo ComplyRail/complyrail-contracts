@@ -110,6 +110,12 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+
+        assert!(
+            entry.status.can_transition_to(&status),
+            "invalid vasp status transition"
+        );
+
         entry.status = status;
         env.storage().instance().set(&vasp, &entry);
 
@@ -223,10 +229,13 @@ impl ComplyRailContract {
             id_bytes[..8].copy_from_slice(&counter_bytes);
             let payment_id = BytesN::from_array(&env, &id_bytes);
 
-            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
+            if let Some(payment) = env.storage().instance().get::<BytesN<32>, PaymentRecord>(&payment_id) {
+                let matches = if as_sender {
+                    payment.from_vasp == vasp_address
+                } else {
+                    payment.to_vasp == vasp_address
+                };
+                if matches {
                     results.push_back(payment_id);
                 }
             }
@@ -236,7 +245,7 @@ impl ComplyRailContract {
     }
 
     fn require_admin(env: &Env, caller: &Address) {
-        assert!(Self::is_admin(env, caller), "caller is not an admin");
+        assert!(Self::is_admin(env, caller), "unauthorized: caller is not an admin");
     }
 
     fn is_admin(env: &Env, caller: &Address) -> bool {
@@ -244,7 +253,6 @@ impl ComplyRailContract {
             .instance()
             .get(&symbol_short!("admins"))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-
         for admin in admins.iter() {
             if &admin == caller {
                 return true;
@@ -267,9 +275,9 @@ impl ComplyRailContract {
 
 fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
     let mut key = String::from_str(env, "thr:");
-    key = key.concat(&String::from_str(env, &asset.to_string()));
-    key = key.concat(&String::from_str(env, ":"));
-    key = key.concat(jurisdiction);
+    key.append(&asset.to_string());
+    key.append(&String::from_str(env, ":"));
+    key.append(jurisdiction);
     key
 }
 
