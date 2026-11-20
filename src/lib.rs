@@ -181,6 +181,7 @@ impl ComplyRailContract {
             ivms_version: None,
             created_at: env.ledger().timestamp(),
             resolved_at: if status == PaymentStatus::Released { Some(env.ledger().timestamp()) } else { None },
+            resolution_reason: None,
         };
 
         env.storage().instance().set(&payment_id, &payment);
@@ -287,6 +288,7 @@ impl ComplyRailContract {
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
+        payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
@@ -306,6 +308,7 @@ impl ComplyRailContract {
 
         payment.status = PaymentStatus::Rejected;
         payment.resolved_at = Some(env.ledger().timestamp());
+        payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));

@@ -68,4 +68,6 @@ pub struct PaymentRecord {
     pub ivms_version: Option<String>,
     pub created_at: u64,
     pub resolved_at: Option<u64>,
+    /// Reason an admin gave for releasing or rejecting the payment (#40).
+    pub resolution_reason: Option<String>,
 }
