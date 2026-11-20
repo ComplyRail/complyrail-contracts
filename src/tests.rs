@@ -259,13 +259,13 @@ mod tests {
         );
 
         let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        // Governed by originating jurisdiction -> below threshold -> released.
         assert_eq!(record.status, PaymentStatus::Released);
         assert_eq!(token.balance(&env.current_contract_address()), 0);
     }
 
     #[test]
-    fn test_attestation_release() {
+    fn test_originating_vasp_can_submit_attestation() {
+        // Issue #24: only the originating VASP may submit the attestation.
         let env = Env::default();
         env.mock_all_auths();
         let admin = Address::random(&env);
@@ -275,7 +275,7 @@ mod tests {
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
-        let (asset, token) = setup_token(&env, &admin);
+        let (asset, _token) = setup_token(&env, &admin);
         let asset_admin = StellarAssetClient::new(&env, &asset);
         asset_admin.mint(&from_vasp, &10_000_0000000);
 
@@ -301,6 +301,89 @@ mod tests {
             public_key,
         );
 
-        let t
+        let threshold = 1000_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
-/* … truncated 5035 chars — edit only what you need near the top … */
+        let payment_amount = 2000_0000000;
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            payment_amount,
+        );
+
+        let attestation_hash = BytesN::from_array(&env, &[1u8; 32]);
+        ComplyRailContract::submit_attestation(
+            env.clone(),
+            from_vasp.clone(),
+            payment_id.clone(),
+            attestation_hash.clone(),
+        );
+
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.attestation_hash, Some(attestation_hash));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_beneficiary_vasp_cannot_submit_attestation() {
+        // Issue #24: the beneficiary (receiving) VASP must be rejected.
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let (asset, _token) = setup_token(&env, &admin);
+        let asset_admin = StellarAssetClient::new(&env, &asset);
+        asset_admin.mint(&from_vasp, &10_000_0000000);
+
+        let name = String::from_slice(&env, "Test VASP");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            jurisdiction.clone(),
+            public_key,
+        );
+
+        let threshold = 1000_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+
+        let payment_amount = 2000_0000000;
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            payment_amount,
+        );
+
+        let attestation_hash = BytesN::from_array(&env, &[1u8; 32]);
+        ComplyRailContract::submit_attestation(
+            env.clone(),
+            to_vasp.clone(),
+            payment_id.clone(),
+            attestation_hash,
+        );
+    }
+}

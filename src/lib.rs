@@ -217,19 +217,45 @@ impl ComplyRailContract {
         for i in 0..count {
             let mut id_bytes = [0u8; 32];
             let counter_bytes = i.to_le_bytes();
-            id_bytes[..8].copy_from_slice(&counter_bytes);
-            let payment_id = BytesN::from_array(&env, &id_bytes);
+            id_bytes[24..32].copy_from_slice(&counter_bytes);
+            let id = BytesN::from_array(&env, &id_bytes);
 
-            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
-                    results.push_back(payment_id);
+            if let Some(payment) = env.storage().instance().get::<BytesN<32>, PaymentRecord>(&id) {
+                let matches = if as_sender {
+                    payment.from_vasp == vasp_address
+                } else {
+                    payment.to_vasp == vasp_address
+                };
+                if matches {
+                    results.push_back(id);
                 }
             }
         }
 
         results
+    }
+
+    pub fn submit_attestation(
+        env: Env,
+        caller_vasp: Address,
+        payment_id: BytesN<32>,
+        attestation_hash: BytesN<32>,
+        ivms_version: String,
+    ) {
+        caller_vasp.require_auth();
+
+        let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
+
+        // Only the originating VASP records the attestation. The beneficiary
+        // releases funds after verifying the hash submitted by the originator.
+        assert!(caller_vasp == payment.from_vasp, "only originating VASP can submit attestation");
+        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+
+        payment.attestation_hash = Some(attestation_hash.clone());
+        payment.ivms_version = Some(ivms_version.clone());
+
+        env.storage().instance().set(&payment_id, &payment);
+        env.events().publish((symbol_short!("att_sub"),), &payment_id);
     }
 
     fn require_admin(env: &Env, caller: &Address) {
@@ -249,13 +275,13 @@ impl ComplyRailContract {
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        let next = count + 1;
+        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = counter + 1;
         env.storage().instance().set(&symbol_short!("counter"), &next);
 
         let mut id_bytes = [0u8; 32];
-        let counter_bytes = count.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
+        let counter_bytes = counter.to_le_bytes();
+        id_bytes[24..32].copy_from_slice(&counter_bytes);
         BytesN::from_array(env, &id_bytes)
     }
 }
@@ -265,8 +291,8 @@ fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
 }
 
 fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let mut key = String::from_str(env, "");
-    key = key.concat(&String::from_str(env, &asset.to_string()));
+    let mut key = String::from_str(env, "thr:");
+    key = key.concat(&String::from_str(env, &format!("{:?}", asset)));
     key = key.concat(&String::from_str(env, ":"));
     key = key.concat(jurisdiction);
     key
