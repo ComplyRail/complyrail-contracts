@@ -3,8 +3,16 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
+
+/// Errors a caller can match on, instead of a panic or a bare `None` (#46).
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ComplyError {
+    VaspNotFound = 1,
+}
 
 #[contract]
 pub struct ComplyRailContract;
@@ -75,6 +83,7 @@ impl ComplyRailContract {
             status: VaspStatus::Active,
             added_at: env.ledger().timestamp(),
             expires_at: expiry,
+            updated_at: env.ledger().timestamp(),
         };
 
         env.storage().instance().set(&vasp, &entry);
@@ -88,9 +97,26 @@ impl ComplyRailContract {
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
+        entry.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
+    }
+
+    /// Set a registration to expire `expires_in_seconds` from now (#47).
+    ///
+    /// Day-based `register_vasp` and `renew_vasp_registration` are unchanged, so
+    /// existing callers keep working.
+    pub fn set_vasp_expiry_seconds(env: Env, caller: Address, vasp: Address, expires_in_seconds: u64) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        entry.expires_at = Some(env.ledger().timestamp() + expires_in_seconds);
+        entry.updated_at = env.ledger().timestamp();
+
+        env.storage().instance().set(&vasp, &entry);
+        env.events().publish((symbol_short!("vasp_exp"),), &vasp);
     }
 
     pub fn update_vasp_status(env: Env, caller: Address, vasp: Address, status: VaspStatus) {
@@ -99,13 +125,15 @@ impl ComplyRailContract {
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
         entry.status = status;
+        entry.updated_at = env.ledger().timestamp();
         env.storage().instance().set(&vasp, &entry);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
-    pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        env.storage().instance().get(&vasp)
+    /// Returns `VaspNotFound` instead of `None` for an unknown VASP (#46).
+    pub fn get_vasp(env: Env, vasp: Address) -> Result<VaspEntry, ComplyError> {
+        env.storage().instance().get(&vasp).ok_or(ComplyError::VaspNotFound)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
@@ -191,6 +219,14 @@ impl ComplyRailContract {
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
         env.storage().instance().get(&payment_id)
+    }
+
+    /// Outcome of a payment and when it was resolved, without the full record (#45).
+    pub fn get_payment_status(env: Env, payment_id: BytesN<32>) -> Option<(PaymentStatus, Option<u64>)> {
+        env.storage()
+            .instance()
+            .get::<_, PaymentRecord>(&payment_id)
+            .map(|payment| (payment.status, payment.resolved_at))
     }
 
     pub fn get_payment_count(env: Env) -> u64 {
