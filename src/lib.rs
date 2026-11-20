@@ -181,10 +181,23 @@ impl ComplyRailContract {
             ivms_version: None,
             created_at: env.ledger().timestamp(),
             resolved_at: if status == PaymentStatus::Released { Some(env.ledger().timestamp()) } else { None },
+            resolution_reason: None,
         };
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_sub"),), &payment_id);
+
+        let mut payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .instance()
+            .get(&symbol_short!("pay_ids"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        payment_ids.push_back(payment_id.clone());
+        env.storage().instance().set(&symbol_short!("pay_ids"), &payment_ids);
+
+        // Amount, parties and asset are in the event so indexers need no lookup (#38).
+        env.events().publish(
+            (symbol_short!("pay_sub"),),
+            (payment_id.clone(), from_vasp, to_vasp, asset, amount),
+        );
 
         payment_id
     }
@@ -202,15 +215,13 @@ impl ComplyRailContract {
         vasp_address: Address,
         as_sender: bool,
     ) -> soroban_sdk::Vec<BytesN<32>> {
-        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .instance()
+            .get(&symbol_short!("pay_ids"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
         let mut results = soroban_sdk::Vec::new(&env);
 
-        for i in 0..count {
-            let mut id_bytes = [0u8; 32];
-            let counter_bytes = i.to_le_bytes();
-            id_bytes[..8].copy_from_slice(&counter_bytes);
-            let payment_id = BytesN::from_array(&env, &id_bytes);
-
+        for payment_id in payment_ids.iter() {
             if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
                 if as_sender && payment.from_vasp == vasp_address {
                     results.push_back(payment_id);
@@ -277,9 +288,13 @@ impl ComplyRailContract {
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
+        payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
+        env.events().publish(
+            (symbol_short!("pay_rel"),),
+            (payment_id.clone(), caller.clone(), payment.amount, reason),
+        );
     }
 
     pub fn reject_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
@@ -296,20 +311,26 @@ impl ComplyRailContract {
 
         payment.status = PaymentStatus::Rejected;
         payment.resolved_at = Some(env.ledger().timestamp());
+        payment.resolution_reason = Some(reason.clone());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
+        env.events().publish(
+            (symbol_short!("pay_rej"),),
+            (payment_id.clone(), caller.clone(), payment.amount, reason),
+        );
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
 
-        let mut id_bytes = [0u8; 32];
-        let counter_bytes = counter.to_le_bytes();
-        id_bytes[..8].copy_from_slice(&counter_bytes);
-
-        BytesN::from_array(env, &id_bytes)
+        // Hash the counter with ledger state so IDs are not sequential (#37).
+        // Callers find payments through the index, not by guessing IDs.
+        let mut seed = soroban_sdk::Bytes::new(env);
+        seed.extend_from_slice(&counter.to_be_bytes());
+        seed.extend_from_slice(&env.ledger().timestamp().to_be_bytes());
+        seed.extend_from_slice(&env.ledger().sequence().to_be_bytes());
+        env.crypto().sha256(&seed).into()
     }
 }
 
