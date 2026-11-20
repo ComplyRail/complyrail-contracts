@@ -51,3 +51,38 @@ pub struct InitEvent {
     pub admin: Address,
     pub threshold: u32,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmAddEvent {
+    pub caller: Address,
+    pub admin: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaspRegEvent {
+    pub caller: Address,
+    pub vasp: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaspUpdEvent {
+    pub caller: Address,
+    pub vasp: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThrSetEvent {
+    pub caller: Address,
+    pub threshold: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApprThEvent {
+    pub caller: Address,
+    pub threshold: u32,
+}

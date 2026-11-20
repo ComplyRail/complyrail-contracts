@@ -35,7 +35,7 @@ impl ComplyRailContract {
 
         admins.push_back(new_admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
-        env.events().publish((symbol_short!("adm_add"),), &new_admin);
+        env.events().publish((symbol_short!("adm_add"),), (caller, new_admin));
     }
 
     pub fn get_admins(env: Env) -> soroban_sdk::Vec<Address> {
@@ -51,7 +51,7 @@ impl ComplyRailContract {
 
         assert!(threshold > 0, "threshold must be positive");
         env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-        env.events().publish((symbol_short!("appr_th"),), &threshold);
+        env.events().publish((symbol_short!("appr_th"),), (caller, threshold));
     }
 
     pub fn register_vasp(
@@ -79,7 +79,7 @@ impl ComplyRailContract {
         };
 
         env.storage().instance().set(&vasp, &entry);
-        env.events().publish((symbol_short!("vasp_reg"),), &vasp);
+        env.events().publish((symbol_short!("vasp_reg"),), (caller, vasp));
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
@@ -102,7 +102,7 @@ impl ComplyRailContract {
         entry.status = status;
         env.storage().instance().set(&vasp, &entry);
 
-        env.events().publish((symbol_short!("vasp_upd"),), &vasp);
+        env.events().publish((symbol_short!("vasp_upd"),), (caller, vasp));
     }
 
     pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
@@ -122,7 +122,7 @@ impl ComplyRailContract {
         thresholds.set(key, amount);
 
         env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
-        env.events().publish((symbol_short!("thr_set"),), &asset);
+        env.events().publish((symbol_short!("thr_set"),), (caller, asset));
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
@@ -224,8 +224,42 @@ impl ComplyRailContract {
         results
     }
 
-    pub fn submit_attestation(
-        env: Env,
-        caller_vasp: Addr
+    fn require_admin(env: &Env, caller: &Address) {
+        let admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-/* … truncated 4135 chars — edit only what you need near the top … */
+        let mut found = false;
+        for admin in admins.iter() {
+            if &admin == caller {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "caller is not an admin");
+    }
+
+    fn generate_payment_id(env: &Env) -> BytesN<32> {
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = count + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
+        let mut id_bytes = [0u8; 32];
+        let counter_bytes = count.to_le_bytes();
+        id_bytes[..8].copy_from_slice(&counter_bytes);
+        BytesN::from_array(env, &id_bytes)
+    }
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "thr:");
+    key.append(&String::from_str(env, &asset.to_string()));
+    key.append(&String::from_str(env, ":"));
+    key.append(jurisdiction);
+    key
+}
+
+fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
+    entry.jurisdiction.clone()
+}

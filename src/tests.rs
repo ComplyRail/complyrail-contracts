@@ -65,6 +65,37 @@ mod tests {
     }
 
     #[test]
+    fn test_register_vasp_event_includes_caller() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let vasp = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Anchor A");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            name,
+            jurisdiction,
+            public_key,
+        );
+
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+        let topic: soroban_sdk::Symbol = topics.get(0).unwrap().into_val(&env);
+        assert_eq!(topic, symbol_short!("vasp_reg"));
+
+        let (emitted_caller, emitted_vasp): (Address, Address) = data.into_val(&env);
+        assert_eq!(emitted_caller, admin);
+        assert_eq!(emitted_vasp, vasp);
+    }
+
+    #[test]
     fn test_set_threshold() {
         let env = Env::default();
         let admin = Address::random(&env);
@@ -79,6 +110,29 @@ mod tests {
 
         let stored_threshold = ComplyRailContract::get_threshold(env.clone(), asset.clone(), jurisdiction.clone());
         assert_eq!(stored_threshold, Some(threshold));
+    }
+
+    #[test]
+    fn test_set_threshold_event_includes_caller() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let asset = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let jurisdiction = String::from_slice(&env, "US");
+        let threshold = 1000_0000000;
+
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+        let topic: soroban_sdk::Symbol = topics.get(0).unwrap().into_val(&env);
+        assert_eq!(topic, symbol_short!("thr_set"));
+
+        let (emitted_caller, emitted_threshold): (Address, i128) = data.into_val(&env);
+        assert_eq!(emitted_caller, admin);
+        assert_eq!(emitted_threshold, threshold);
     }
 
     #[test]
@@ -243,29 +297,6 @@ mod tests {
             payment_amount,
         );
 
-        assert_eq!(
-            ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap().status,
-            PaymentStatus::Pending
-        );
+        asser
 
-        let message_hash = BytesN::from_array(&env, &[1u8; 32]);
-        let ivms_version = String::from_slice(&env, "1.0");
-
-        ComplyRailContract::submit_attestation(
-            env.clone(),
-            to_vasp.clone(),
-            payment_id.clone(),
-            message_hash.clone(),
-            ivms_version.clone(),
-        );
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert_eq!(payment.attestation_hash, Some(message_hash));
-        assert_eq!(payment.ivms_version, Some(ivms_version));
-    }
-
-    #[test]
-    fn test_admin
-
-/* … truncated 3628 chars — edit only what you need near the top … */
+/* … truncated 882 chars — edit only what you need near the top … */
