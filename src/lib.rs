@@ -263,6 +263,9 @@ impl ComplyRailContract {
 
         assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
 
+        // An existing attestation is never overwritten (#35).
+        assert!(payment.attestation_hash.is_none(), "payment already attested");
+
         payment.status = PaymentStatus::Released;
         payment.attestation_hash = Some(message_hash.clone());
         payment.ivms_version = Some(ivms_version);
