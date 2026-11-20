@@ -6,6 +6,9 @@ mod tests;
 use soroban_sdk::{contract, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
+/// Upper bound on admins, so the admin list cannot grow without limit (#67).
+const MAX_ADMINS: u32 = 16;
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -32,6 +35,7 @@ impl ComplyRailContract {
             assert!(admin != new_admin, "admin already exists");
         }
 
+        assert!(admins.len() < MAX_ADMINS, "admin list is full");
         admins.push_back(new_admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.events().publish((symbol_short!("adm_add"),), &new_admin);
