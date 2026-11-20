@@ -14,6 +14,19 @@ ComplyRail contracts implement an on-chain compliance layer for Stellar anchors 
 - **Multi-Admin**: Require multiple admins for sensitive operations
 - **Event Audit Trail**: Every state change emits events for off-chain indexing
 
+## Toolchain
+
+Builds are pinned so the same commit always produces the same WASM:
+
+| Component | Version |
+|-----------|---------|
+| Rust | 1.85.0 |
+| Stellar CLI | 22.8.1 |
+| soroban-sdk | 22.0.8 |
+| WASM target | `wasm32v1-none` |
+
+Build output: `target/wasm32v1-none/release/complyrail_contracts.wasm`
+
 ## License
 
 Apache License 2.0 — see LICENSE file.
