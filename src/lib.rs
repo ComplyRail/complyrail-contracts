@@ -192,7 +192,11 @@ impl ComplyRailContract {
         payment_ids.push_back(payment_id.clone());
         env.storage().instance().set(&symbol_short!("pay_ids"), &payment_ids);
 
-        env.events().publish((symbol_short!("pay_sub"),), &payment_id);
+        // Amount, parties and asset are in the event so indexers need no lookup (#38).
+        env.events().publish(
+            (symbol_short!("pay_sub"),),
+            (payment_id.clone(), from_vasp, to_vasp, asset, amount),
+        );
 
         payment_id
     }
