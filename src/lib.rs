@@ -114,26 +114,13 @@ impl ComplyRailContract {
 
         assert!(amount >= 0, "threshold must not be negative");
 
-        let mut thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
-
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.set(key, amount);
-
-        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
+        // One storage entry per rule, so setting one rule does not rewrite the rest (#55).
+        env.storage().instance().set(&(symbol_short!("thr"), asset.clone(), jurisdiction), &amount);
         env.events().publish((symbol_short!("thr_set"),), &asset);
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
-        let thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
-
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.get(key)
+        env.storage().instance().get(&(symbol_short!("thr"), asset, jurisdiction))
     }
 
     /// Remove a threshold rule, so the asset and jurisdiction no longer have one (#54).
@@ -141,16 +128,10 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
+        let key = (symbol_short!("thr"), asset.clone(), jurisdiction.clone());
+        assert!(env.storage().instance().has(&key), "threshold not found");
+        env.storage().instance().remove(&key);
 
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        assert!(thresholds.contains_key(key.clone()), "threshold not found");
-        thresholds.remove(key);
-
-        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
         env.events().publish((symbol_short!("thr_del"),), (asset, jurisdiction));
     }
 
@@ -331,12 +312,6 @@ impl ComplyRailContract {
 
         BytesN::from_array(env, &id_bytes)
     }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
-    String::from_str(env, &combined)
 }
 
 fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
