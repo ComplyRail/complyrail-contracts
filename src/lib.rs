@@ -211,6 +211,24 @@ impl ComplyRailContract {
             .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
     }
 
+    /// One page of `get_payments_by_vasp`, starting at `start` and holding at most
+    /// `limit` IDs (#63). Callers walk the index with increasing `start`.
+    pub fn get_payments_by_vasp_page(
+        env: Env,
+        vasp_address: Address,
+        as_sender: bool,
+        start: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<BytesN<32>> {
+        let ids = Self::get_payments_by_vasp(env.clone(), vasp_address, as_sender);
+        let mut page = soroban_sdk::Vec::new(&env);
+        let end = start.saturating_add(limit).min(ids.len());
+        for i in start..end {
+            page.push_back(ids.get(i).unwrap());
+        }
+        page
+    }
+
     pub fn submit_attestation(
         env: Env,
         caller_vasp: Address,
