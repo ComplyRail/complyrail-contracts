@@ -77,19 +77,19 @@ impl ComplyRailContract {
             expires_at: expiry,
         };
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
@@ -97,15 +97,15 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
     pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        env.storage().instance().get(&vasp)
+        env.storage().persistent().get(&vasp)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
