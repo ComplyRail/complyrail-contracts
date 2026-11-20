@@ -308,6 +308,16 @@ impl ComplyRailContract {
 
         assert!(payment.status != PaymentStatus::Released, "payment already released");
 
+        // The beneficiary must still be eligible at release time (#43).
+        let to_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&payment.to_vasp)
+            .expect("to_vasp not registered");
+        assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
+        if let Some(expires) = to_entry.expires_at {
+            assert!(env.ledger().timestamp() < expires, "to_vasp registration expired");
+        }
+
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
 
