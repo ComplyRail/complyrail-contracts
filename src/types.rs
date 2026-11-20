@@ -1,71 +1,88 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VaspStatus {
     Active,
     Suspended,
     Revoked,
 }
 
-#[derive(Clone, Debug)]
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VaspEntry {
     pub address: Address,
     pub name: String,
     pub jurisdiction: String,
-    pub public_key: soroban_sdk::BytesN<32>,
+    pub public_key: BytesN<32>,
     pub status: VaspStatus,
     pub added_at: u64,
     pub expires_at: Option<u64>,
 }
 
-#[derive(Clone, Debug)]
 #[contracttype]
-pub struct ThresholdConfig {
-    pub asset: Address,
-    pub jurisdiction: String,
-    pub threshold_amount: i128,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PaymentStatus {
     Pending,
     Released,
-    Held,
+    Refunded,
     Rejected,
 }
 
-#[derive(Clone, Debug)]
 #[contracttype]
-pub struct AdminApproval {
-    pub admin: Address,
-    pub approved_at: u64,
-}
-
-#[derive(Clone, Debug)]
-#[contracttype]
-pub struct PendingApproval {
-    pub operation_id: soroban_sdk::BytesN<32>,
-    pub operation_type: String,
-    pub operation_data: String,
-    pub approvals: soroban_sdk::Vec<AdminApproval>,
-    pub created_at: u64,
-}
-
-#[derive(Clone, Debug)]
-#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaymentRecord {
-    pub id: soroban_sdk::BytesN<32>,
+    pub id: BytesN<32>,
     pub from_vasp: Address,
     pub to_vasp: Address,
     pub beneficiary: Address,
     pub asset: Address,
     pub amount: i128,
     pub status: PaymentStatus,
-    pub attestation_hash: Option<soroban_sdk::BytesN<32>>,
+    pub attestation_hash: Option<BytesN<32>>,
     pub ivms_version: Option<String>,
     pub created_at: u64,
     pub resolved_at: Option<u64>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitEvent {
+    pub admin: Address,
+    pub threshold: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmAddEvent {
+    pub caller: Address,
+    pub admin: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaspRegEvent {
+    pub caller: Address,
+    pub vasp: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VaspUpdEvent {
+    pub caller: Address,
+    pub vasp: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThrSetEvent {
+    pub caller: Address,
+    pub threshold: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApprThEvent {
+    pub caller: Address,
+    pub threshold: u32,
 }
