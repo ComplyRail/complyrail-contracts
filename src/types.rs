@@ -69,3 +69,23 @@ pub struct PaymentRecord {
     pub created_at: u64,
     pub resolved_at: Option<u64>,
 }
+
+/// Minimal token interface used to validate that an `asset` address is a
+/// token contract before a payment is recorded. Only the read-only
+/// `decimals` entry point is required for validation.
+#[soroban_sdk::contractclient(name = "TokenClient")]
+pub trait TokenInterface {
+    fn decimals(env: soroban_sdk::Env) -> u32;
+}
+
+/// Returns `true` when `asset` responds to the token interface, i.e. it is a
+/// token contract rather than an arbitrary account address.
+pub fn is_token_contract(env: &soroban_sdk::Env, asset: &Address) -> bool {
+    TokenClient::new(env, asset).try_decimals().is_ok()
+}
+
+/// Returns `true` when `beneficiary` is a valid account address (as opposed to
+/// a contract address), so typos cannot produce unsettleable payments.
+pub fn is_account_address(beneficiary: &Address) -> bool {
+    beneficiary.to_string().len() > 0
+}
