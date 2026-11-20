@@ -151,6 +151,8 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
+        assert!(amount > 0, "amount must be positive");
+
         let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
         let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
 
@@ -219,9 +221,12 @@ impl ComplyRailContract {
             let payment_id = BytesN::from_array(&env, &id_bytes);
 
             if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
+                let matches = if as_sender {
+                    payment.from_vasp == vasp_address
+                } else {
+                    payment.to_vasp == vasp_address
+                };
+                if matches {
                     results.push_back(payment_id);
                 }
             }
@@ -230,8 +235,42 @@ impl ComplyRailContract {
         results
     }
 
-    pub fn submit_attestation(
-        env: Env,
-        caller_vasp: Addr
+    fn require_admin(env: &Env, caller: &Address) {
+        let admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-/* … truncated 4135 chars — edit only what you need near the top … */
+        let mut is_admin = false;
+        for admin in admins.iter() {
+            if &admin == caller {
+                is_admin = true;
+                break;
+            }
+        }
+        assert!(is_admin, "caller is not an admin");
+    }
+
+    fn generate_payment_id(env: &Env) -> BytesN<32> {
+        let count: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = count + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
+        let mut id_bytes = [0u8; 32];
+        let counter_bytes = count.to_le_bytes();
+        id_bytes[..8].copy_from_slice(&counter_bytes);
+        BytesN::from_array(env, &id_bytes)
+    }
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "thr:");
+    key = key.concat(&String::from_str(env, &asset.to_string()));
+    key = key.concat(&String::from_str(env, ":"));
+    key = key.concat(jurisdiction);
+    key
+}
+
+fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
+    entry.jurisdiction.clone()
+}

@@ -245,10 +245,8 @@ mod tests {
     }
 
     #[test]
-    fn test_payment_status_reached() {
-        // Documents the statuses actually reachable by the contract.
-        // PaymentStatus::Held was removed as unused; only Pending and
-        // Released are set by any code path.
+    #[should_panic]
+    fn test_submit_payment_rejects_zero_amount() {
         let env = Env::default();
         let admin = Address::random(&env);
         let from_vasp = Address::random(&env);
@@ -283,36 +281,114 @@ mod tests {
         let threshold = 1000_0000000;
         ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
 
-        // Pending: above threshold, awaiting attestation
-        let pending_id = ComplyRailContract::submit_payment(
+        ComplyRailContract::submit_payment(
             env.clone(),
             from_vasp.clone(),
             to_vasp.clone(),
             beneficiary.clone(),
             asset.clone(),
-            2000_0000000,
-        );
-        assert_eq!(
-            ComplyRailContract::get_payment(env.clone(), pending_id).unwrap().status,
-            PaymentStatus::Pending
-        );
-
-        // Released: below threshold, auto-released
-        let released_id = ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            500_0000000,
-        );
-        assert_eq!(
-            ComplyRailContract::get_payment(env.clone(), released_id).unwrap().status,
-            PaymentStatus::Released
+            0,
         );
     }
 
     #[test]
-    fn test_renew
+    #[should_panic]
+    fn test_submit_payment_rejects_negative_amount() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+        let asset = Address::random(&env);
 
-/* … truncated 3528 chars — edit only what you need near the top … */
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Test VASP");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            jurisdiction.clone(),
+            public_key,
+        );
+
+        let threshold = 1000_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+
+        ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            -1,
+        );
+    }
+
+    #[test]
+    fn test_submit_payment_accepts_amount_one() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let from_vasp = Address::random(&env);
+        let to_vasp = Address::random(&env);
+        let beneficiary = Address::random(&env);
+        let asset = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Test VASP");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            from_vasp.clone(),
+            name.clone(),
+            jurisdiction.clone(),
+            public_key.clone(),
+        );
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            to_vasp.clone(),
+            name,
+            jurisdiction.clone(),
+            public_key,
+        );
+
+        let threshold = 1000_0000000;
+        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
+
+        let payment_id = ComplyRailContract::submit_payment(
+            env.clone(),
+            from_vasp.clone(),
+            to_vasp.clone(),
+            beneficiary.clone(),
+            asset.clone(),
+            1,
+        );
+
+        let record = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
+        assert_eq!(record.amount, 1);
+        assert_eq!(record.status, PaymentStatus::Released);
+    }
+
+    #[test]
+    fn test_payme
+
+/* … truncated 2332 chars — edit only what you need near the top … */
