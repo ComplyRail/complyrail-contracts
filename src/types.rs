@@ -70,3 +70,11 @@ pub struct PaymentRecord {
     pub created_at: u64,
     pub resolved_at: Option<u64>,
 }
+
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PaymentReleasedEvent {
+    pub payment_id: soroban_sdk::BytesN<32>,
+    pub admin_override: bool,
+    pub override_reason: Option<String>,
+}

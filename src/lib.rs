@@ -234,8 +234,8 @@ impl ComplyRailContract {
 
         let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
 
-        assert!(caller_vasp == payment.from_vasp || caller_vasp == payment.to_vasp, "caller not a party to payment");
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
+        assert!(caller_vasp == payment.from_vasp, "only sender vasp can attest");
 
         payment.attestation_hash = Some(attestation_hash.clone());
         payment.ivms_version = Some(ivms_version.clone());
@@ -244,14 +244,30 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("attest"),), &payment_id);
     }
 
-    pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>) {
+    pub fn release_payment(
+        env: Env,
+        caller: Address,
+        payment_id: BytesN<32>,
+        override_reason: Option<String>,
+    ) {
         caller.require_auth();
 
         let mut payment: PaymentRecord = env.storage().instance().get(&payment_id).expect("payment not found");
 
-        assert!(caller == payment.beneficiary, "caller is not the beneficiary");
-        assert!(payment.status == PaymentStatus::Pending, "payment not pending");
-        assert!(payment.attestation_hash.is_some(), "attestation not recorded");
+        assert!(payment.status != PaymentStatus::Released, "payment already released");
+
+        let is_admin = Self::is_admin(&env, &caller);
+
+        if is_admin {
+            // Admin override requires an explicit, non-empty reason.
+            let reason = override_reason.expect("admin override requires a reason");
+            assert!(reason.len() > 0, "admin override requires a reason");
+            env.events().publish((symbol_short!("pay_ovr"),), &(payment_id.clone(), reason));
+        } else {
+            assert!(caller == payment.from_vasp, "only sender vasp or admin can release");
+            // A payment requiring attestation must have an attestation hash before release.
+            assert!(payment.attestation_hash.is_some(), "attestation required before release");
+        }
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
@@ -261,27 +277,31 @@ impl ComplyRailContract {
     }
 
     fn require_admin(env: &Env, caller: &Address) {
+        assert!(Self::is_admin(env, caller), "caller is not an admin");
+    }
+
+    fn is_admin(env: &Env, caller: &Address) -> bool {
         let admins: soroban_sdk::Vec<Address> = env.storage()
             .instance()
             .get(&symbol_short!("admins"))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-        let mut is_admin = false;
         for admin in admins.iter() {
             if &admin == caller {
-                is_admin = true;
-                break;
+                return true;
             }
         }
-        assert!(is_admin, "caller is not an admin");
+        false
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = counter + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
         let mut id_bytes = [0u8; 32];
         let counter_bytes = counter.to_le_bytes();
         id_bytes[..8].copy_from_slice(&counter_bytes);
-        env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
         BytesN::from_array(env, &id_bytes)
     }
 }
