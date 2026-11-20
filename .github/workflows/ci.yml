@@ -7,18 +7,54 @@ on:
     branches: [main]
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --lib --release
+
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --lib --release 2>&1 | grep -E "^error" || echo "Build successful"
+      - name: Run tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test 2>&1 | tee test-output.txt
+      - name: Test summary
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f test-output.txt ]; then
+            echo "### Tests did not run" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          passed=$(grep -E '^test result:' test-output.txt | sed -E 's/.* ([0-9]+) passed.*/\1/' | awk '{s+=$1} END {print s+0}')
+          failed=$(grep -E '^test result:' test-output.txt | sed -E 's/.* ([0-9]+) failed.*/\1/' | awk '{s+=$1} END {print s+0}')
+          ignored=$(grep -E '^test result:' test-output.txt | sed -E 's/.* ([0-9]+) ignored.*/\1/' | awk '{s+=$1} END {print s+0}')
+          {
+            echo "### Test results"
+            echo ""
+            echo "| Passed | Failed | Ignored |"
+            echo "|-------:|-------:|--------:|"
+            echo "| $passed | $failed | $ignored |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo clippy 2>&1 || echo "Clippy warnings present (non-blocking)"
-      - run: cargo fmt --check 2>&1 || echo "Format issues present (non-blocking)"
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
