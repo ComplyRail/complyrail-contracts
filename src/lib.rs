@@ -77,19 +77,19 @@ impl ComplyRailContract {
             expires_at: expiry,
         };
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
         entry.expires_at = Some(current_expiry + (extension_days * 86400));
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
     }
 
@@ -97,15 +97,15 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
 
     pub fn get_vasp(env: Env, vasp: Address) -> Option<VaspEntry> {
-        env.storage().instance().get(&vasp)
+        env.storage().persistent().get(&vasp)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
@@ -144,8 +144,8 @@ impl ComplyRailContract {
     ) -> BytesN<32> {
         from_vasp.require_auth();
 
-        let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
-        let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
+        let from_entry: VaspEntry = env.storage().persistent().get(&from_vasp).expect("from_vasp not registered");
+        let to_entry: VaspEntry = env.storage().persistent().get(&to_vasp).expect("to_vasp not registered");
 
         assert!(from_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
@@ -183,14 +183,14 @@ impl ComplyRailContract {
             resolved_at: if status == PaymentStatus::Released { Some(env.ledger().timestamp()) } else { None },
         };
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_sub"),), &payment_id);
 
         payment_id
     }
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
-        env.storage().instance().get(&payment_id)
+        env.storage().persistent().get(&payment_id)
     }
 
     pub fn get_payment_count(env: Env) -> u64 {
@@ -211,7 +211,7 @@ impl ComplyRailContract {
             id_bytes[..8].copy_from_slice(&counter_bytes);
             let payment_id = BytesN::from_array(&env, &id_bytes);
 
-            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
+            if let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) {
                 if as_sender && payment.from_vasp == vasp_address {
                     results.push_back(payment_id);
                 } else if !as_sender && payment.to_vasp == vasp_address {
@@ -233,19 +233,19 @@ impl ComplyRailContract {
         caller_vasp.require_auth();
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
         assert!(payment.status == PaymentStatus::Pending, "payment not pending");
 
         let to_vasp_entry: VaspEntry = env.storage()
-            .instance()
+            .persistent()
             .get(&payment.to_vasp)
             .expect("to_vasp not found");
 
         let from_vasp_entry: VaspEntry = env.storage()
-            .instance()
+            .persistent()
             .get(&payment.from_vasp)
             .expect("from_vasp not found");
 
@@ -260,7 +260,7 @@ impl ComplyRailContract {
         payment.ivms_version = Some(ivms_version);
         payment.resolved_at = Some(env.ledger().timestamp());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
         env.events().publish((symbol_short!("att_sub"),), &payment_id);
     }
 
@@ -269,7 +269,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -278,7 +278,7 @@ impl ComplyRailContract {
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rel"),), (payment_id.clone(), reason));
     }
 
@@ -287,7 +287,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -297,7 +297,7 @@ impl ComplyRailContract {
         payment.status = PaymentStatus::Rejected;
         payment.resolved_at = Some(env.ledger().timestamp());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
         env.events().publish((symbol_short!("pay_rej"),), (payment_id.clone(), reason));
     }
 
