@@ -89,6 +89,13 @@ impl ComplyRailContract {
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
 
+        // Only the admin or the VASP itself may renew a registration.
+        let is_admin = Self::is_admin(&env, &caller);
+        assert!(
+            is_admin || caller == vasp,
+            "unauthorized: only admin or the vasp may renew"
+        );
+
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
 
         let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
@@ -228,8 +235,44 @@ impl ComplyRailContract {
         results
     }
 
-    pub fn submit_attestation(
-        env: Env,
-        caller_vasp: Addr
+    fn require_admin(env: &Env, caller: &Address) {
+        assert!(Self::is_admin(env, caller), "caller is not an admin");
+    }
 
-/* … truncated 4135 chars — edit only what you need near the top … */
+    fn is_admin(env: &Env, caller: &Address) -> bool {
+        let admins: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("admins"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+
+        for admin in admins.iter() {
+            if &admin == caller {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn generate_payment_id(env: &Env) -> BytesN<32> {
+        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
+        let next = counter + 1;
+        env.storage().instance().set(&symbol_short!("counter"), &next);
+
+        let mut id_bytes = [0u8; 32];
+        let counter_bytes = counter.to_le_bytes();
+        id_bytes[..8].copy_from_slice(&counter_bytes);
+        BytesN::from_array(env, &id_bytes)
+    }
+}
+
+fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
+    let mut key = String::from_str(env, "thr:");
+    key = key.concat(&String::from_str(env, &asset.to_string()));
+    key = key.concat(&String::from_str(env, ":"));
+    key = key.concat(jurisdiction);
+    key
+}
+
+fn jurisdiction_from_vasp(entry: &VaspEntry) -> String {
+    entry.jurisdiction.clone()
+}

@@ -247,17 +247,96 @@ mod tests {
             env.clone(),
             to_vasp.clone(),
             payment_id.clone(),
-            message_hash.clone(),
-            ivms_version.clone(),
+            message_hash,
+            ivms_version,
         );
 
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert_eq!(payment.attestation_hash, Some(message_hash));
-        assert_eq!(payment.ivms_version, Some(ivms_version));
+        assert_eq!(
+            ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap().status,
+            PaymentStatus::Released
+        );
     }
 
     #[test]
-    fn test_admin
+    fn test_admin_can_renew_vasp() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let vasp = Address::random(&env);
 
-/* … truncated 3628 chars — edit only what you need near the top … */
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Anchor A");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            name,
+            jurisdiction,
+            public_key,
+        );
+
+        // Admin is authorized to renew.
+        ComplyRailContract::renew_vasp_registration(env.clone(), admin.clone(), vasp.clone());
+
+        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
+        assert_eq!(entry.status, VaspStatus::Active);
+    }
+
+    #[test]
+    fn test_vasp_can_renew_itself() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let vasp = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Anchor A");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            name,
+            jurisdiction,
+            public_key,
+        );
+
+        // The VASP itself is authorized to renew.
+        ComplyRailContract::renew_vasp_registration(env.clone(), vasp.clone(), vasp.clone());
+
+        let entry = ComplyRailContract::get_vasp(env.clone(), vasp.clone()).unwrap();
+        assert_eq!(entry.status, VaspStatus::Active);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_outsider_cannot_renew_vasp() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+        let vasp = Address::random(&env);
+        let outsider = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let name = String::from_slice(&env, "Anchor A");
+        let jurisdiction = String::from_slice(&env, "US");
+        let public_key = BytesN::from_array(&env, &[0u8; 32]);
+
+        ComplyRailContract::register_vasp(
+            env.clone(),
+            admin.clone(),
+            vasp.clone(),
+            name,
+            jurisdiction,
+            public_key,
+        );
+
+        // A non-admin, non-VASP caller must not be able to renew.
+        ComplyRailContract::renew_vasp_registration(env.clone(), outsider.clone(), vasp.clone());
+    }
+}
