@@ -44,3 +44,10 @@ pub struct PaymentRecord {
     pub created_at: u64,
     pub resolved_at: Option<u64>,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitEvent {
+    pub admin: Address,
+    pub threshold: u32,
+}

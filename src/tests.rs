@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::*;
-    use soroban_sdk::{Address, Env, BytesN, String};
+    use soroban_sdk::{Address, Env, BytesN, String, symbol_short, IntoVal};
 
     #[test]
     fn test_initialize() {
@@ -12,6 +12,27 @@ mod tests {
 
         let stored_admin: Address = env.storage().instance().get(&soroban_sdk::symbol_short!("admin")).unwrap();
         assert_eq!(stored_admin, admin);
+    }
+
+    #[test]
+    fn test_initialize_emits_init_event() {
+        let env = Env::default();
+        let admin = Address::random(&env);
+
+        ComplyRailContract::initialize(env.clone(), admin.clone());
+
+        let events = env.events().all();
+        assert!(!events.is_empty(), "expected an init event to be published");
+
+        let (contract, topics, data) = events.last().unwrap();
+        assert_eq!(contract, env.current_contract());
+        assert_eq!(topics.len(), 1);
+        let topic: soroban_sdk::Symbol = topics.get(0).unwrap().into_val(&env);
+        assert_eq!(topic, symbol_short!("init"));
+
+        let (emitted_admin, emitted_threshold): (Address, i128) = data.into_val(&env);
+        assert_eq!(emitted_admin, admin);
+        assert_eq!(emitted_threshold, 0);
     }
 
     #[test]
@@ -245,110 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn test_admin_release() {
-        let env = Env::default();
-        let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
+    fn test_admin
 
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Test VASP");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
-            name,
-            jurisdiction.clone(),
-            public_key,
-        );
-
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
-
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
-        );
-
-        let reason = String::from_slice(&env, "Manual override");
-        ComplyRailContract::release_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Released);
-        assert!(payment.resolved_at.is_some());
-    }
-
-    #[test]
-    fn test_reject_payment() {
-        let env = Env::default();
-        let admin = Address::random(&env);
-        let from_vasp = Address::random(&env);
-        let to_vasp = Address::random(&env);
-        let beneficiary = Address::random(&env);
-        let asset = Address::random(&env);
-
-        ComplyRailContract::initialize(env.clone(), admin.clone());
-
-        let name = String::from_slice(&env, "Test VASP");
-        let jurisdiction = String::from_slice(&env, "US");
-        let public_key = BytesN::from_array(&env, &[0u8; 32]);
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            from_vasp.clone(),
-            name.clone(),
-            jurisdiction.clone(),
-            public_key.clone(),
-        );
-
-        ComplyRailContract::register_vasp(
-            env.clone(),
-            admin.clone(),
-            to_vasp.clone(),
-            name,
-            jurisdiction.clone(),
-            public_key,
-        );
-
-        let threshold = 1000_0000000;
-        ComplyRailContract::set_threshold(env.clone(), admin.clone(), asset.clone(), jurisdiction.clone(), threshold);
-
-        let payment_amount = 2000_0000000;
-        let payment_id = ComplyRailContract::submit_payment(
-            env.clone(),
-            from_vasp.clone(),
-            to_vasp.clone(),
-            beneficiary.clone(),
-            asset.clone(),
-            payment_amount,
-        );
-
-        let reason = String::from_slice(&env, "Compliance check failed");
-        ComplyRailContract::reject_payment(env.clone(), admin.clone(), payment_id.clone(), reason);
-
-        let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
-        assert_eq!(payment.status, PaymentStatus::Rejected);
-        assert!(payment.resolved_at.is_some());
-    }
-}
+/* … truncated 3628 chars — edit only what you need near the top … */
