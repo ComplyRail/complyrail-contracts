@@ -14,6 +14,17 @@ ComplyRail contracts implement an on-chain compliance layer for Stellar anchors 
 - **Multi-Admin**: Require multiple admins for sensitive operations
 - **Event Audit Trail**: Every state change emits events for off-chain indexing
 
+## Release Profile
+
+The `[profile.release]` section in `Cargo.toml` is tuned for the deployed WASM artifact:
+
+- **Optimized**: `lto = true` and `codegen-units = 1` produce a smaller, faster binary at the cost of longer build times.
+- **Small**: `strip = true` removes debug symbols to keep the deployed WASM within size limits.
+- **Deterministic**: fixed optimization settings ensure reproducible builds.
+- **Overflow checks enabled**: `overflow-checks = true` keeps arithmetic overflow panics in release builds, so unexpected overflows fail loudly rather than silently wrapping.
+
+> **Warning:** Changing any of these settings alters the compiled WASM artifact (size, performance, and behavior). Any such change should be reviewed and documented, since it affects what is deployed on-chain.
+
 ## License
 
 Apache License 2.0 — see LICENSE file.
