@@ -14,6 +14,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --lib --release 2>&1 | grep -E "^error" || echo "Build successful"
+      - run: cargo test
 
   lint:
     runs-on: ubuntu-latest

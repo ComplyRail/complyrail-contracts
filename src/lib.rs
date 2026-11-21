@@ -65,6 +65,8 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
+        assert!(!env.storage().instance().has(&vasp), "vasp already registered");
+
         let expiry = expiry_days.map(|days| env.ledger().timestamp() + (days * 86400));
 
         let entry = VaspEntry {
@@ -83,11 +85,20 @@ impl ComplyRailContract {
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
+        assert!(
+            Self::is_admin(&env, &caller) || caller == vasp,
+            "unauthorized: only admin or the vasp may renew"
+        );
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
 
-        let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
-        entry.expires_at = Some(current_expiry + (extension_days * 86400));
+        // Unlimited registrations stay unlimited. Limited ones extend from
+        // max(now, expires_at) so renewing an expired VASP makes it valid again.
+        if let Some(current_expiry) = entry.expires_at {
+            let now = env.ledger().timestamp();
+            let base = if current_expiry > now { current_expiry } else { now };
+            entry.expires_at = Some(base + (extension_days * 86400));
+        }
 
         env.storage().instance().set(&vasp, &entry);
         env.events().publish((symbol_short!("vasp_renew"),), &vasp);
@@ -324,20 +335,16 @@ fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
 }
 
 impl ComplyRailContract {
-    fn require_admin(env: &Env, caller: &Address) {
+    fn is_admin(env: &Env, caller: &Address) -> bool {
         let admins: soroban_sdk::Vec<Address> = env.storage()
             .instance()
             .get(&symbol_short!("admins"))
             .unwrap_or_else(|| soroban_sdk::Vec::new(env));
 
-        let mut is_admin = false;
-        for admin in admins.iter() {
-            if admin == *caller {
-                is_admin = true;
-                break;
-            }
-        }
+        admins.iter().any(|admin| admin == *caller)
+    }
 
-        assert!(is_admin, "unauthorized: not an admin");
+    fn require_admin(env: &Env, caller: &Address) {
+        assert!(Self::is_admin(env, caller), "unauthorized: not an admin");
     }
 }
