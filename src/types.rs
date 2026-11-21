@@ -1,4 +1,24 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, BytesN, String};
+
+/// Every storage key used by the contract. Each variant is encoded with its
+/// own discriminant, so keys of different kinds (e.g. the payment counter
+/// and a payment id) can never collide in storage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub enum DataKey {
+    /// Instance: list of admin addresses.
+    Admins,
+    /// Instance: minimum number of admin approvals.
+    MinApprovals,
+    /// Persistent: monotonically increasing payment counter.
+    PaymentCounter,
+    /// Persistent: registered VASP entry, keyed by VASP address.
+    Vasp(Address),
+    /// Persistent: payment record, keyed by payment id.
+    Payment(BytesN<32>),
+    /// Persistent: compliance threshold, keyed by (asset, jurisdiction).
+    Threshold(Address, String),
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[contracttype]
