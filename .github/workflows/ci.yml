@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  WASM_TARGET: wasm32-unknown-unknown
+  WASM_NAME: complyrail
+  DOCKER_IMAGE: complyrail-build:latest
+  WASM_SIZE_BASELINE: .wasm-size-baseline
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,3 +28,124 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy 2>&1 || echo "Clippy warnings present (non-blocking)"
       - run: cargo fmt --check 2>&1 || echo "Format issues present (non-blocking)"
+
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify Cargo.lock is committed and up to date
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "::error::Cargo.lock is missing. It must be committed for reproducible builds."
+            exit 1
+          fi
+          cargo metadata --locked --format-version 1 > /dev/null
+          echo "Cargo.lock is present and up to date."
+
+  reproducible-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.WASM_TARGET }}
+      - name: Build WASM (first pass)
+        run: |
+          cargo build --locked --release --target "$WASM_TARGET" --target-dir target-repro-1
+      - name: Build WASM (second pass)
+        run: |
+          cargo build --locked --release --target "$WASM_TARGET" --target-dir target-repro-2
+      - name: Compare WASM hashes
+        run: |
+          WASM_PATH_1="target-repro-1/${WASM_TARGET}/release/${WASM_NAME}.wasm"
+          WASM_PATH_2="target-repro-2/${WASM_TARGET}/release/${WASM_NAME}.wasm"
+          if [ ! -f "$WASM_PATH_1" ]; then
+            echo "::error::First build did not produce $WASM_PATH_1"
+            exit 1
+          fi
+          if [ ! -f "$WASM_PATH_2" ]; then
+            echo "::error::Second build did not produce $WASM_PATH_2"
+            exit 1
+          fi
+          HASH_1=$(sha256sum "$WASM_PATH_1" | awk '{print $1}')
+          HASH_2=$(sha256sum "$WASM_PATH_2" | awk '{print $1}')
+          echo "First build hash:  $HASH_1"
+          echo "Second build hash: $HASH_2"
+          {
+            echo "## Reproducible Build"
+            echo ""
+            echo "| Build | SHA-256 |"
+            echo "| ----- | ------- |"
+            echo "| First pass  | \`$HASH_1\` |"
+            echo "| Second pass | \`$HASH_2\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HASH_1" != "$HASH_2" ]; then
+            echo "::error::WASM hashes differ between builds; the build is not reproducible."
+            exit 1
+          fi
+          echo "WASM_SHA256=$HASH_1" >> "$GITHUB_ENV"
+          echo "$HASH_1  ${WASM_NAME}.wasm" > wasm-sha256.txt
+      - name: Upload WASM hash for release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-sha256
+          path: wasm-sha256.txt
+          if-no-files-found: error
+
+  wasm-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.WASM_TARGET }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build WASM
+        run: |
+          cargo build --locked --release --target "$WASM_TARGET"
+      - name: Check WASM size budget
+        run: |
+          WASM_PATH="${WASM_TARGET}/${WASM_TARGET}/release/${WASM_NAME}.wasm"
+          if [ ! -f "$WASM_PATH" ]; then
+            echo "::error::Build did not produce $WASM_PATH"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM_PATH")
+          if [ ! -f "$WASM_SIZE_BASELINE" ]; then
+            echo "::error::Baseline file $WASM_SIZE_BASELINE is missing."
+            exit 1
+          fi
+          BASELINE=$(tr -d '[:space:]' < "$WASM_SIZE_BASELINE")
+          if ! [[ "$BASELINE" =~ ^[0-9]+$ ]]; then
+            echo "::error::Baseline file $WASM_SIZE_BASELINE does not contain a valid byte count."
+            exit 1
+          fi
+          DELTA=$((SIZE - BASELINE))
+          {
+            echo "## WASM Size Budget"
+            echo ""
+            echo "| Metric | Bytes |"
+            echo "| ------ | ----- |"
+            echo "| Current size | $SIZE |"
+            echo "| Baseline budget | $BASELINE |"
+            echo "| Delta | $DELTA |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "WASM size: $SIZE bytes (baseline budget: $BASELINE bytes, delta: $DELTA bytes)"
+          if [ "$SIZE" -gt "$BASELINE" ]; then
+            echo "::error::WASM size $SIZE bytes exceeds the budget of $BASELINE bytes."
+            exit 1
+          fi
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          docker build -t "$DOCKER_IMAGE" .
+          docker image inspect "$DOCKER_IMAGE" > /dev/null
+          echo "Built Docker image $DOCKER_IMAGE"

@@ -1,0 +1,16 @@
+# WASM size baseline
+#
+# This file stores the reference size (in bytes) of the compiled contract WASM
+# artifact. The CI `wasm-size` job compares the freshly built artifact against
+# this baseline and fails when the contract grows past the budget.
+#
+# Format: a single integer (bytes) on the first non-comment, non-empty line.
+# The value below is the budget limit (baseline + allowed headroom).
+#
+# To update after an intentional size change:
+#   1. Build the contract: `cargo build --release --target wasm32-unknown-unknown`
+#   2. Record the new artifact size in bytes.
+#   3. Update the value below (optionally add a small headroom margin).
+#
+# Budget limit (bytes):
+65536

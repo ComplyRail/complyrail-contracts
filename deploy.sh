@@ -30,10 +30,17 @@ fi
 
 echo ""
 
+# Pinned build image name and tag
+IMAGE="complyrail-build:latest"
+
 # Build contract
 echo "📦 Building contract..."
 if command -v docker &> /dev/null; then
-  docker run --rm -v $(pwd):/workspace complyrail-build:latest
+  if ! docker image inspect "$IMAGE" &> /dev/null; then
+    echo "🐳 Build image $IMAGE not found locally, building it..."
+    docker build -t "$IMAGE" .
+  fi
+  docker run --rm -v $(pwd):/workspace "$IMAGE"
 elif command -v cargo &> /dev/null; then
   cargo build --release --target wasm32-unknown-unknown
 else
