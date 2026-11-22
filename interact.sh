@@ -2,29 +2,43 @@
 set -e
 
 # ComplyRail Contracts Interaction Script
+# Usage: ./interact.sh [testnet|public] [action] [args...] [--mainnet] [--dry-run] [--yes]
 
-# Check Stellar CLI is available
-if ! command -v stellar >/dev/null 2>&1; then
-  echo "❌ Error: stellar CLI not found"
-  echo "Install it from https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli"
-  exit 1
-fi
-echo "🔧 $(stellar --version)"
+# Parse flags out of the positional arguments
+DRY_RUN=false
+ASSUME_YES=false
+MAINNET_FLAG=false
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      DRY_RUN=true
+      ;;
+    --yes|-y)
+      ASSUME_YES=true
+      ;;
+    --mainnet)
+      MAINNET_FLAG=true
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
 
-NETWORK="${1:-testnet}"
-ACTION="${2:-status}"
+NETWORK="${POSITIONAL[0]:-testnet}"
+ACTION="${POSITIONAL[1]:-status}"
 
 # Validate network argument (fail closed)
 case "$NETWORK" in
   testnet)
     ;;
   public)
-    if [ "$3" != "--mainnet" ]; then
+    if [ "$MAINNET_FLAG" != true ]; then
       echo "❌ Error: 'public' requires an explicit --mainnet flag"
-      echo "Run: ./interact.sh public --mainnet <action> [args...]"
+      echo "Run: ./interact.sh public <action> [args...] --mainnet"
       exit 1
     fi
-    shift
     ;;
   *)
     echo "❌ Error: invalid network '$NETWORK'"
@@ -46,10 +60,20 @@ if [ -z "$SIGNER" ]; then
   exit 1
 fi
 
-if ! stellar keys address "$SIGNER" >/dev/null 2>&1; then
-  echo "❌ Error: signer identity '$SIGNER' does not exist"
-  echo "Create it with: stellar keys generate $SIGNER"
-  exit 1
+if [ "$DRY_RUN" = false ]; then
+  # Check Stellar CLI is available (a dry run does not call it)
+  if ! command -v stellar >/dev/null 2>&1; then
+    echo "❌ Error: stellar CLI not found"
+    echo "Install it from https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli"
+    exit 1
+  fi
+  echo "🔧 $(stellar --version)"
+
+  if ! stellar keys address "$SIGNER" >/dev/null 2>&1; then
+    echo "❌ Error: signer identity '$SIGNER' does not exist"
+    echo "Create it with: stellar keys generate $SIGNER"
+    exit 1
+  fi
 fi
 
 # Set network
@@ -64,12 +88,44 @@ fi
 echo "📋 Contract: $CONTRACT_ID"
 echo "🌐 Network: $NETWORK"
 echo "🔑 Signer: $SIGNER"
+if [ "$DRY_RUN" = true ]; then
+  echo "🧪 Dry run: commands will be printed, not executed"
+fi
 echo ""
+
+# Confirmation prompt before irreversible public (mainnet) actions
+if [ "$NETWORK" = "public" ]; then
+  echo "⚠️  WARNING: You are about to perform an action on the PUBLIC (mainnet) network."
+  echo "📋 Contract ID: $CONTRACT_ID"
+  echo "👤 Signer: $SIGNER"
+  echo "🎬 Action: $ACTION"
+  echo ""
+  if [ "$ASSUME_YES" = true ]; then
+    echo "✅ --yes passed, skipping confirmation"
+  else
+    printf "Type 'public' to confirm: "
+    read -r CONFIRMATION
+    if [ "$CONFIRMATION" != "public" ]; then
+      echo "❌ Confirmation failed (got '$CONFIRMATION'). Aborting."
+      exit 1
+    fi
+  fi
+  echo ""
+fi
+
+# Run a stellar command, or just print it in dry-run mode
+run_stellar() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[dry-run] stellar $*"
+  else
+    stellar "$@"
+  fi
+}
 
 case "$ACTION" in
   status)
     echo "Getting contract status..."
-    stellar contract invoke \
+    run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
@@ -77,13 +133,13 @@ case "$ACTION" in
     ;;
 
   register-vasp)
-    VASP_ADDRESS="${3:-GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX}"
-    JURISDICTION="${4:-US}"
+    VASP_ADDRESS="${POSITIONAL[2]:-GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
     echo "Registering VASP..."
     echo "Address: $VASP_ADDRESS"
     echo "Jurisdiction: $JURISDICTION"
 
-    stellar contract invoke \
+    run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
@@ -95,18 +151,18 @@ case "$ACTION" in
     ;;
 
   submit-payment)
-    FROM_VASP="${3:-GXXXXXXX1}"
-    TO_VASP="${4:-GXXXXXXX2}"
-    AMOUNT="${5:-1000}"
-    ASSET="${6:-GXXXXXXX3}"
-    DATA_HASH="${7:-0000000000000000000000000000000000000000000000000000000000000000}"
+    FROM_VASP="${POSITIONAL[2]:-GXXXXXXX1}"
+    TO_VASP="${POSITIONAL[3]:-GXXXXXXX2}"
+    AMOUNT="${POSITIONAL[4]:-1000}"
+    ASSET="${POSITIONAL[5]:-GXXXXXXX3}"
+    DATA_HASH="${POSITIONAL[6]:-0000000000000000000000000000000000000000000000000000000000000000}"
 
     echo "Submitting payment..."
     echo "From: $FROM_VASP"
     echo "To: $TO_VASP"
     echo "Amount: $AMOUNT"
 
-    stellar contract invoke \
+    run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
@@ -121,11 +177,11 @@ case "$ACTION" in
     ;;
 
   get-threshold)
-    ASSET="${3:-GXXXXXXX}"
-    JURISDICTION="${4:-US}"
+    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
     echo "Getting threshold..."
 
-    stellar contract invoke \
+    run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
@@ -135,12 +191,12 @@ case "$ACTION" in
     ;;
 
   set-threshold)
-    ASSET="${3:-GXXXXXXX}"
-    JURISDICTION="${4:-US}"
-    AMOUNT="${5:-100000}"
+    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
+    JURISDICTION="${POSITIONAL[3]:-US}"
+    AMOUNT="${POSITIONAL[4]:-100000}"
     echo "Setting threshold..."
 
-    stellar contract invoke \
+    run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
@@ -153,11 +209,16 @@ case "$ACTION" in
     ;;
 
   *)
-    echo "Usage: ./interact.sh [testnet|public] [--mainnet] [action] [args...]"
+    echo "Usage: ./interact.sh [testnet|public] [action] [args...] [--mainnet] [--dry-run] [--yes]"
     echo ""
     echo "Environment:"
     echo "  CONTRACT_ID - Contract ID to interact with (required)"
     echo "  SIGNER      - Stellar identity name used to sign (required)"
+    echo ""
+    echo "Flags:"
+    echo "  --mainnet               - Required for the public network"
+    echo "  --dry-run               - Print stellar commands instead of executing them"
+    echo "  --yes                   - Skip the confirmation prompt for public actions"
     echo ""
     echo "Actions:"
     echo "  status                  - Get contract info"
@@ -170,7 +231,8 @@ case "$ACTION" in
     echo "  ./interact.sh testnet status"
     echo "  ./interact.sh testnet register-vasp GXXXXXXX US"
     echo "  ./interact.sh testnet submit-payment GXXXXXXX1 GXXXXXXX2 5000"
-    echo "  ./interact.sh public --mainnet status"
+    echo "  ./interact.sh --dry-run public set-threshold GXXXXXXX US 100000 --mainnet"
+    echo "  ./interact.sh public status --mainnet"
     exit 1
     ;;
 esac

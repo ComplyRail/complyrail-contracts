@@ -88,3 +88,67 @@ jobs:
 
           echo "::error::soroban-sdk lock entry changed without an [sdk-bump] marker in the commit message."
           exit 1
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck on all shell scripts
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find . -type f -name '*.sh' -not -path './.git/*')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "No shell scripts found."
+            exit 0
+          fi
+          printf 'Checking %d script(s):\n' "${#scripts[@]}"
+          printf '  %s\n' "${scripts[@]}"
+          shellcheck "${scripts[@]}"
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make scripts executable
+        run: chmod +x ./deploy.sh ./interact.sh
+      - name: Start Stellar quickstart (local network)
+        run: |
+          set -euo pipefail
+          docker run -d --name stellar \
+            -p 8000:8000 \
+            stellar/quickstart:latest \
+            --local
+      - name: Wait for RPC endpoint to become ready
+        run: |
+          set -euo pipefail
+          echo "Waiting for Stellar quickstart RPC endpoint..."
+          for i in $(seq 1 60); do
+            if curl -sf -X POST http://localhost:8000/soroban/rpc \
+              -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' >/dev/null 2>&1; then
+              echo "RPC endpoint is ready."
+              exit 0
+            fi
+            echo "Attempt $i/60: not ready yet, retrying in 2s..."
+            sleep 2
+          done
+          echo "RPC endpoint did not become ready in time." >&2
+          docker logs stellar || true
+          exit 1
+      - name: Dry-run deploy
+        run: ./deploy.sh testnet --yes --dry-run
+      - name: Run interact actions
+        run: |
+          set -euo pipefail
+          for action in deploy initialise register-vasp set-threshold submit-payment; do
+            echo "Running interact.sh action: $action"
+            ./interact.sh testnet "$action" --yes
+          done
+      - name: Dump quickstart logs on failure
+        if: failure()
+        run: docker logs stellar || true
+      - name: Stop quickstart container
+        if: always()
+        run: docker rm -f stellar || true

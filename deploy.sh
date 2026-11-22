@@ -2,35 +2,71 @@
 set -e
 
 # ComplyRail Contracts Deployment Script
+# Usage: ./deploy.sh [testnet|public] [account_name] [--mainnet] [--dry-run] [--yes]
 
-# Check the Stellar CLI is available
-if ! command -v stellar &> /dev/null; then
-  echo "❌ Error: stellar CLI not found. Please install the Stellar CLI."
-  exit 1
-fi
-echo "🔧 Stellar CLI: $(stellar --version)"
-echo ""
+DRY_RUN=false
+ASSUME_YES=false
+MAINNET_FLAG=false
+POSITIONAL=()
 
-NETWORK="${1:-testnet}"
-ACCOUNT="${2:-alice}"
-MAINNET_FLAG="${3:-}"
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)
+      DRY_RUN=true
+      ;;
+    --yes|-y)
+      ASSUME_YES=true
+      ;;
+    --mainnet)
+      MAINNET_FLAG=true
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
+
+NETWORK="${POSITIONAL[0]:-testnet}"
+ACCOUNT="${POSITIONAL[1]:-alice}"
 
 # Fail closed: only testnet or public are accepted
 if [ "$NETWORK" != "testnet" ] && [ "$NETWORK" != "public" ]; then
   echo "❌ Error: Unknown network '$NETWORK'."
-  echo "Usage: ./deploy.sh [testnet|public] [account_name] [--mainnet]"
+  echo "Usage: ./deploy.sh [testnet|public] [account_name] [--mainnet] [--dry-run] [--yes]"
   exit 1
 fi
 
 # Require an explicit --mainnet flag for the public network
-if [ "$NETWORK" = "public" ] && [ "$MAINNET_FLAG" != "--mainnet" ]; then
+if [ "$NETWORK" = "public" ] && [ "$MAINNET_FLAG" != true ]; then
   echo "❌ Error: Deploying to the public network requires the explicit --mainnet flag."
   echo "Usage: ./deploy.sh public [account_name] --mainnet"
   exit 1
 fi
 
+# Check the Stellar CLI is available (a dry run does not call it)
+if [ "$DRY_RUN" = false ]; then
+  if ! command -v stellar &> /dev/null; then
+    echo "❌ Error: stellar CLI not found. Please install the Stellar CLI."
+    exit 1
+  fi
+  echo "🔧 Stellar CLI: $(stellar --version)"
+  echo ""
+fi
+
+# Echo a command instead of running it when in dry-run mode.
+run() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
 echo "🚀 Deploying ComplyRail Contracts to $NETWORK..."
 echo "Account: $ACCOUNT"
+if [ "$DRY_RUN" = true ]; then
+  echo "Mode: dry-run (no commands will be executed)"
+fi
 echo ""
 
 # Set network variables
@@ -48,12 +84,33 @@ fi
 
 echo ""
 
+# Mainnet safety: show what will be affected and require explicit confirmation.
+if [ "$NETWORK" = "public" ]; then
+  echo "⚠️  You are about to perform an action on the PUBLIC (mainnet) network."
+  if [ "$DRY_RUN" = false ]; then
+    ADMIN_PREVIEW=$(stellar keys address "$ACCOUNT" --network "$NETWORK" 2>/dev/null || echo "<unknown>")
+  else
+    ADMIN_PREVIEW="<unknown>"
+  fi
+  echo "Admin: $ADMIN_PREVIEW"
+  if [ "$ASSUME_YES" = true ]; then
+    echo "Proceeding without confirmation (--yes)."
+  else
+    read -r -p "Type the network name (public) to confirm: " CONFIRM
+    if [ "$CONFIRM" != "public" ]; then
+      echo "❌ Confirmation failed. Aborting."
+      exit 1
+    fi
+  fi
+  echo ""
+fi
+
 # Build contract
 echo "📦 Building contract..."
 if command -v docker &> /dev/null; then
-  docker run --rm -v $(pwd):/workspace complyrail-build:latest
+  run docker run --rm -v "$(pwd)":/workspace complyrail-build:latest
 elif command -v cargo &> /dev/null; then
-  cargo build --release --target wasm32v1-none
+  run cargo build --release --target wasm32v1-none
 else
   echo "❌ Error: Neither Docker nor Cargo found. Please install one."
   exit 1
@@ -61,32 +118,39 @@ fi
 
 WASM_FILE="target/wasm32v1-none/release/complyrail_contracts.wasm"
 
-if [ ! -f "$WASM_FILE" ]; then
+if [ "$DRY_RUN" = false ] && [ ! -f "$WASM_FILE" ]; then
   echo "❌ Error: WASM file not found at $WASM_FILE"
   exit 1
 fi
 
 echo "✅ Contract built successfully"
 echo "📄 WASM: $WASM_FILE"
-echo "📊 Size: $(du -h $WASM_FILE | cut -f1)"
+if [ "$DRY_RUN" = false ]; then
+  echo "📊 Size: $(du -h "$WASM_FILE" | cut -f1)"
+fi
 echo ""
 
 # Deploy contract
 echo "🚀 Deploying contract..."
-DEPLOY_OUTPUT=$(stellar contract deploy \
-  --wasm "$WASM_FILE" \
-  --source "$ACCOUNT" \
-  --network "$NETWORK" \
-  2>&1) || true
+if [ "$DRY_RUN" = true ]; then
+  echo "[dry-run] stellar contract deploy --wasm $WASM_FILE --source $ACCOUNT --network $NETWORK"
+  CONTRACT_ID="<dry-run>"
+else
+  DEPLOY_OUTPUT=$(stellar contract deploy \
+    --wasm "$WASM_FILE" \
+    --source "$ACCOUNT" \
+    --network "$NETWORK" \
+    2>&1) || true
 
-# Extract the contract ID (strkey: C followed by 55 base32 chars)
-CONTRACT_ID=$(echo "$DEPLOY_OUTPUT" | grep -oE 'C[A-Z2-7]{55}' | head -n1 || echo "")
+  # Extract the contract ID (strkey: C followed by 55 base32 chars)
+  CONTRACT_ID=$(echo "$DEPLOY_OUTPUT" | grep -oE 'C[A-Z2-7]{55}' | head -n1 || echo "")
 
-if [ -z "$CONTRACT_ID" ]; then
-  echo "❌ Error: Could not find a contract ID in the deployment output."
-  echo "⚠️  Deployment output:"
-  echo "$DEPLOY_OUTPUT"
-  exit 1
+  if [ -z "$CONTRACT_ID" ]; then
+    echo "❌ Error: Could not find a contract ID in the deployment output."
+    echo "⚠️  Deployment output:"
+    echo "$DEPLOY_OUTPUT"
+    exit 1
+  fi
 fi
 
 echo "✅ Contract deployed!"
@@ -99,10 +163,15 @@ echo ""
 
 # Initialize contract with admin
 echo "🔑 Initializing contract with admin..."
-ADMIN_ADDR=$(stellar keys address "$ACCOUNT" --network "$NETWORK")
+if [ "$DRY_RUN" = true ]; then
+  echo "[dry-run] stellar keys address $ACCOUNT --network $NETWORK"
+  ADMIN_ADDR="<dry-run>"
+else
+  ADMIN_ADDR=$(stellar keys address "$ACCOUNT" --network "$NETWORK")
+fi
 echo "Admin address: $ADMIN_ADDR"
 
-stellar contract invoke \
+run stellar contract invoke \
   --id "$CONTRACT_ID" \
   --source "$ACCOUNT" \
   --network "$NETWORK" \
@@ -112,32 +181,33 @@ stellar contract invoke \
 echo "✅ Contract initialized"
 echo ""
 
-# Verify the admin was set
-echo "🔍 Verifying admin..."
-ADMINS=$(stellar contract invoke \
-  --id "$CONTRACT_ID" \
-  --source "$ACCOUNT" \
-  --network "$NETWORK" \
-  -- get_admins)
+if [ "$DRY_RUN" = false ]; then
+  # Verify the admin was set
+  echo "🔍 Verifying admin..."
+  ADMINS=$(stellar contract invoke \
+    --id "$CONTRACT_ID" \
+    --source "$ACCOUNT" \
+    --network "$NETWORK" \
+    -- get_admins)
 
-if [ -z "$ADMINS" ]; then
-  echo "❌ Error: get_admins returned no admins. Contract may not be initialized."
-  exit 1
-fi
+  if [ -z "$ADMINS" ]; then
+    echo "❌ Error: get_admins returned no admins. Contract may not be initialized."
+    exit 1
+  fi
 
-echo "✅ Admins: $ADMINS"
-echo ""
+  echo "✅ Admins: $ADMINS"
+  echo ""
 
-# Record deployment details so the contract ID is not lost
-echo "💾 Recording deployment..."
-DEPLOYMENTS_DIR="deployments"
-mkdir -p "$DEPLOYMENTS_DIR"
-DEPLOYMENT_FILE="$DEPLOYMENTS_DIR/$NETWORK.json"
-WASM_HASH=$(sha256sum "$WASM_FILE" | cut -d' ' -f1)
-GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  # Record deployment details so the contract ID is not lost
+  echo "💾 Recording deployment..."
+  DEPLOYMENTS_DIR="deployments"
+  mkdir -p "$DEPLOYMENTS_DIR"
+  DEPLOYMENT_FILE="$DEPLOYMENTS_DIR/$NETWORK.json"
+  WASM_HASH=$(sha256sum "$WASM_FILE" | cut -d' ' -f1)
+  GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+  DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cat > "$DEPLOYMENT_FILE" <<EOF
+  cat > "$DEPLOYMENT_FILE" <<JSON
 {
   "network": "$NETWORK",
   "contractId": "$CONTRACT_ID",
@@ -146,10 +216,11 @@ cat > "$DEPLOYMENT_FILE" <<EOF
   "commit": "$GIT_COMMIT",
   "deployedAt": "$DEPLOYED_AT"
 }
-EOF
+JSON
 
-echo "✅ Deployment recorded in $DEPLOYMENT_FILE"
-echo ""
+  echo "✅ Deployment recorded in $DEPLOYMENT_FILE"
+  echo ""
+fi
 
 echo "🎉 Deployment complete!"
 echo ""
