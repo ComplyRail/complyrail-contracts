@@ -18,6 +18,10 @@ ComplyRail contracts implement an on-chain compliance layer for Stellar anchors 
 
 Apache License 2.0 — see LICENSE file.
 
+## Security
+
+See [THREAT_MODEL.md](THREAT_MODEL.md) for the actor definitions, trust assumptions, and attack paths covering the escrow and attestation flow.
+
 ## Legal Notice
 
 ComplyRail is a technical tool, not legal advice. FATF Travel Rule obligations vary by jurisdiction (e.g., EU TFR, FinCEN rules, MAS requirements) and carry real regulatory liability. Any team deploying this to production should have the architecture and IVMS101 handling reviewed by qualified legal/compliance counsel before processing real regulated payments.

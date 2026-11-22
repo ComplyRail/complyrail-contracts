@@ -10,8 +10,8 @@ mod tests {
 
         ComplyRailContract::initialize(env.clone(), admin.clone());
 
-        let stored_admin: Address = env.storage().instance().get(&soroban_sdk::symbol_short!("admin")).unwrap();
-        assert_eq!(stored_admin, admin);
+        let admins: soroban_sdk::Vec<Address> = env.storage().instance().get(&soroban_sdk::symbol_short!("admins")).unwrap();
+        assert_eq!(admins.get(0).unwrap(), admin);
     }
 
     #[test]
@@ -33,6 +33,7 @@ mod tests {
             name,
             jurisdiction,
             public_key.clone(),
+            None,
         );
 
         let stored_vasp = ComplyRailContract::get_vasp(env.clone(), vasp.clone());
@@ -83,6 +84,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -92,6 +94,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         // Set threshold
@@ -141,6 +144,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -150,6 +154,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         // Set threshold
@@ -198,6 +203,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -207,6 +213,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
@@ -266,6 +273,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -275,6 +283,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
@@ -320,6 +329,7 @@ mod tests {
             name.clone(),
             jurisdiction.clone(),
             public_key.clone(),
+            None,
         );
 
         ComplyRailContract::register_vasp(
@@ -329,6 +339,7 @@ mod tests {
             name,
             jurisdiction.clone(),
             public_key,
+            None,
         );
 
         let threshold = 1000_0000000;
@@ -350,5 +361,12 @@ mod tests {
         let payment = ComplyRailContract::get_payment(env.clone(), payment_id.clone()).unwrap();
         assert_eq!(payment.status, PaymentStatus::Rejected);
         assert!(payment.resolved_at.is_some());
+    }
+
+    #[test]
+    fn test_version() {
+        let env = Env::default();
+        let v = ComplyRailContract::version(env);
+        assert_eq!(v, crate::VERSION);
     }
 }

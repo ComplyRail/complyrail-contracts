@@ -77,6 +77,24 @@ soroban contract invoke \
   --admin "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 ```
 
+### 4. Record the Deployed Version
+
+After initialization, store the contract version alongside the contract ID in your deployment record:
+
+```bash
+# Query the on-chain version
+CONTRACT_VERSION=$(soroban contract invoke \
+  --id $CONTRACT_ID \
+  --source alice \
+  --network testnet \
+  -- version)
+
+echo "Contract ID: $CONTRACT_ID"
+echo "Contract version: $CONTRACT_VERSION"
+```
+
+Include both values in your deployment log or secrets manager so you can tell which build is running on each network.
+
 ## Interacting with Contract
 
 ### Register a VASP
