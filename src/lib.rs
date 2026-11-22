@@ -507,7 +507,11 @@ impl ComplyRailContract {
             .get(&payment_id)
             .expect("payment not found");
 
-        assert!(payment.status != PaymentStatus::Released, "payment already released");
+        // Only a pending or held payment can be released, so a rejected or released one cannot be (#27).
+        assert!(
+            payment.status == PaymentStatus::Pending || payment.status == PaymentStatus::Held,
+            "payment cannot be released"
+        );
 
         // The beneficiary must still be eligible at release time (#43).
         let to_entry: VaspEntry = env.storage()

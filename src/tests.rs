@@ -498,3 +498,24 @@ fn test_all_zero_public_key_rejected() {
     assert!(result.is_err());
 }
 
+#[test]
+fn test_rejected_and_released_payments_cannot_be_released() {
+    let (env, client, admin) = setup();
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let asset = Address::generate(&env);
+    register(&env, &client, &admin, &from, None);
+    register(&env, &client, &admin, &to, None);
+
+    // Below threshold: released on submission, so it cannot be released again.
+    client.set_threshold(&admin, &asset, &String::from_str(&env, "US"), &THRESHOLD);
+    let released = client.submit_payment(&from, &to, &beneficiary, &asset, &5);
+    assert!(client.try_release_payment(&admin, &released, &String::from_str(&env, "again")).is_err());
+
+    // Rejected payments cannot be released.
+    let pending = client.submit_payment(&from, &to, &beneficiary, &asset, &(THRESHOLD * 2));
+    client.reject_payment(&admin, &pending, &String::from_str(&env, "not allowed"));
+    assert!(client.try_release_payment(&admin, &pending, &String::from_str(&env, "override")).is_err());
+}
+

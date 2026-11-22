@@ -10,6 +10,8 @@ The contract records state on the Stellar ledger and emits events for each state
 
 Payments are fail-closed: when no threshold is configured for the payment's asset and beneficiary VASP jurisdiction, the payment remains pending and requires an attestation from the beneficiary VASP. Only payments below an explicitly configured threshold are released automatically.
 
+Threshold jurisdiction: the threshold is looked up by the **beneficiary (receiving) VASP's jurisdiction**, not the originator's. A rule set for jurisdiction `*` applies where no rule exists for that jurisdiction (#23).
+
 ## Features
 
 - **VASP Registry** — Register VASPs with jurisdiction, public key, and optional expiry. Admins can suspend or revoke entries.
@@ -120,6 +122,12 @@ CI also verifies that this image builds successfully.
 ## VASP Public Key Format
 
 Each VASP is registered with a `BytesN<32>` public key used to receive encrypted IVMS101 payloads. The key must be a valid 32-byte value and **must not be all zeros** — `register_vasp` rejects an all-zero key, since a VASP registered with a zero key cannot receive encrypted IVMS payloads.
+
+## Threshold Jurisdiction Rule
+
+When `submit_payment` decides whether a payment must be held in escrow, it looks up the threshold using the **originating VASP's jurisdiction** (the `from` VASP), not the receiving VASP's.
+
+Rationale: the Travel Rule obligation is imposed on the originating VASP, which is the party that must collect and transmit originator information before the transfer is released. Gating on the originator's jurisdiction keeps the escrow decision aligned with the obligation that triggers it, and matches the sibling `complyrail-app` contract so the same payment cannot be held in one system and released in the other.
 
 ## License
 
