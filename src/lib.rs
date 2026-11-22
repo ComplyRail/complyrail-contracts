@@ -213,7 +213,7 @@ impl ComplyRailContract {
                 PaymentStatus::Pending
             }
         } else {
-            PaymentStatus::Released
+            PaymentStatus::Pending
         };
 
         let payment = PaymentRecord {
