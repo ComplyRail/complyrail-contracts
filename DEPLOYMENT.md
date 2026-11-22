@@ -8,9 +8,17 @@ Deploy the ComplyRail smart contracts to Stellar testnet or mainnet.
 
 **Using Docker (Recommended):**
 ```bash
+# Build the pinned build image (must match the tag used by deploy.sh)
+docker build -t complyrail-build:latest .
+
 # Build contract in Docker
 docker run --rm -v $(pwd):/workspace complyrail-build:latest
 ```
+
+The image name and tag are pinned to `complyrail-build:latest`; `deploy.sh` runs
+`docker run ... complyrail-build:latest`, so the image must be built locally (or
+pulled from the registry) before running the script. CI builds this image on every
+push to catch breakage.
 
 **Or locally:**
 ```bash
@@ -46,6 +54,9 @@ The deployment scripts check the Stellar CLI version at startup and abort if
 ### 1. Build the Contract
 
 ```bash
+# Build the pinned image first (required by deploy.sh)
+docker build -t complyrail-build:latest .
+
 # Docker build
 docker run --rm -v $(pwd):/workspace complyrail-build:latest
 
@@ -54,6 +65,37 @@ cargo build --release --target wasm32v1-none
 ```
 
 Output: `target/wasm32v1-none/release/complyrail_contracts.wasm`
+
+### 1a. Reproducible Build Verification
+
+Builds of the same commit must produce byte-identical WASM. CI builds the contract
+twice and compares the SHA-256 of both artifacts; the resulting hash is published in
+the release notes.
+
+To verify locally:
+
+```bash
+# Build twice from a clean tree
+cargo clean && cargo build --release --target wasm32-unknown-unknown
+sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm > /tmp/hash1
+
+cargo clean && cargo build --release --target wasm32-unknown-unknown
+sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm > /tmp/hash2
+
+# The two hashes must match
+diff /tmp/hash1 /tmp/hash2 && echo "Reproducible build OK"
+```
+
+To check the deployed WASM against the published release hash:
+
+```bash
+# Fetch the on-chain WASM for the deployed contract and hash it
+soroban contract fetch --id $CONTRACT_ID --network testnet \
+  --out /tmp/deployed.wasm
+sha256sum /tmp/deployed.wasm
+
+# Compare with the hash published in the release notes for the same commit
+```
 
 ### 2. Deploy to Testnet
 
@@ -168,6 +210,7 @@ stellar contract invoke \
 - [ ] Fund testnet account: https://friendbot.stellar.org
 - [ ] Test all contract functions on testnet first
 - [ ] Verify contract bytecode before mainnet deployment
+- [ ] Confirm the deployed WASM SHA-256 matches the hash published in the release notes
 - [ ] Multi-sig setup for critical operations (recommended)
 - [ ] Audit contract code before mainnet
 - [ ] Use testnet for 7+ days to verify stability

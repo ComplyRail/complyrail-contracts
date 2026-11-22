@@ -104,11 +104,17 @@ if [ "$NETWORK" = "public" ]; then
   fi
   echo ""
 fi
+# Pinned build image name and tag
+IMAGE="complyrail-build:latest"
 
 # Build contract
 echo "📦 Building contract..."
 if command -v docker &> /dev/null; then
-  run docker run --rm -v "$(pwd)":/workspace complyrail-build:latest
+  if ! docker image inspect "$IMAGE" &> /dev/null; then
+    echo "🐳 Build image $IMAGE not found locally, building it..."
+    run docker build -t "$IMAGE" .
+  fi
+  run docker run --rm -v "$(pwd)":/workspace "$IMAGE"
 elif command -v cargo &> /dev/null; then
   run cargo build --release --target wasm32v1-none
 else

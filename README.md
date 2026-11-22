@@ -82,6 +82,41 @@ The `[profile.release]` section in `Cargo.toml` is tuned for the deployed WASM a
 
 > **Warning:** Changing any of these settings alters the compiled WASM artifact (size, performance, and behavior). Any such change should be reviewed and documented, since it affects what is deployed on-chain.
 
+## Reproducible Builds
+
+Anyone can rebuild the deployed WASM from source and verify that its SHA-256 hash matches the one published for a release. This lets users confirm that the on-chain code corresponds exactly to the source in this repository.
+
+### Build procedure
+
+Run the following from the repository root:
+
+```sh
+# 1. Install the WASM target (once per toolchain)
+rustup target add wasm32-unknown-unknown
+
+# 2. Build the contract for the WASM target
+cargo build --release --target wasm32-unknown-unknown --locked
+
+# 3. Compute the SHA-256 hash of the resulting WASM
+sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm
+```
+
+The `--locked` flag ensures the build uses exactly the dependency versions recorded in `Cargo.lock`. `Cargo.lock` is committed to this repository specifically to pin dependencies, so a build from the same commit resolves the same crate versions.
+
+### Verification in CI and release notes
+
+CI builds the contract **twice** from the same commit and compares the SHA-256 of the two resulting WASM artifacts. If the hashes differ, the build is not reproducible and CI fails. The verified SHA-256 is published in the release notes for each release, so you can compare it against the hash you compute locally with the procedure above. If the hashes match, the deployed WASM was built from the published source.
+
+## Docker Build
+
+`deploy.sh` runs the build inside a Docker image named `complyrail-build:latest`. The image name and tag are pinned, and `deploy.sh` builds the image automatically if it is not present locally, so you do not need to build it manually. To build it yourself:
+
+```sh
+docker build -t complyrail-build:latest .
+```
+
+CI also verifies that this image builds successfully.
+
 ## License
 
 Apache License 2.0 — see LICENSE file.
