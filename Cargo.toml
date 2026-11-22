@@ -14,10 +14,26 @@ soroban-sdk = { version = "*", features = ["testutils"] }
 crate-type = ["cdylib"]
 
 [profile.release]
+# Optimize for the smallest possible binary size ("z"). Deployed WASM is
+# uploaded on-chain and size directly affects deployment/storage costs, so
+# changing this (e.g. to "s" or 3) will increase the deployed WASM size.
 opt-level = "z"
+# Enable link-time optimization across the whole crate. This shrinks and
+# speeds up the final WASM but increases build time; disabling it changes
+# the generated WASM artifact.
 lto = true
+# Compile the crate as a single codegen unit to maximize cross-module
+# optimization and minimize size. Raising this speeds up builds but produces
+# a larger, less optimized WASM.
 codegen-units = 1
+# Strip debug symbols and other non-essential metadata from the release
+# binary. This reduces the deployed WASM size; disabling it bloats the
+# artifact with symbols that are not needed on-chain.
 strip = true
+# Keep runtime overflow checks enabled in the release build. This preserves
+# arithmetic safety in the deployed WASM: integer overflow/underflow panics
+# instead of silently wrapping, preventing incorrect contract state or
+# exploitable arithmetic bugs. Do not disable this.
 overflow-checks = true
 
 [profile.test]
