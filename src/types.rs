@@ -18,6 +18,8 @@ pub struct VaspEntry {
     pub status: VaspStatus,
     pub added_at: u64,
     pub expires_at: Option<u64>,
+    /// Ledger time of the last change to this registration (#48).
+    pub updated_at: u64,
 }
 
 #[derive(Clone, Debug)]
