@@ -22,3 +22,57 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo clippy 2>&1 || echo "Clippy warnings present (non-blocking)"
       - run: cargo fmt --check 2>&1 || echo "Format issues present (non-blocking)"
+
+  sdk-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Print resolved soroban-sdk version
+        run: |
+          echo "Resolved soroban-sdk version:"
+          cargo tree -i soroban-sdk 2>&1 || echo "soroban-sdk not found in dependency tree"
+      - name: Check SDK lock entry against base commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COMMIT_MESSAGE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          extract_sdk_entry() {
+            # Extract the Cargo.lock package entry for soroban-sdk from a given ref.
+            local ref="$1"
+            git show "${ref}:Cargo.lock" 2>/dev/null | awk '
+              /^\[\[package\]\]/ { in_pkg = 0; buf = $0 "\n"; next }
+              { buf = buf $0 "\n" }
+              /^name = "soroban-sdk"$/ { in_pkg = 1 }
+              in_pkg && /^version = / { print buf; in_pkg = 0 }
+            ' || true
+          }
+
+          BASE_ENTRY="$(extract_sdk_entry "${BASE_SHA}")"
+          HEAD_ENTRY="$(extract_sdk_entry "${HEAD_SHA}")"
+
+          echo "--- Base SDK entry ---"
+          echo "${BASE_ENTRY:-<none>}"
+          echo "--- Head SDK entry ---"
+          echo "${HEAD_ENTRY:-<none>}"
+
+          if [ "${BASE_ENTRY}" = "${HEAD_ENTRY}" ]; then
+            echo "SDK lock entry unchanged."
+            exit 0
+          fi
+
+          echo "SDK lock entry changed between base and head."
+          if printf '%s' "${COMMIT_MESSAGE}" | grep -q '\[sdk-bump\]'; then
+            echo "Commit message contains [sdk-bump] marker; allowing SDK change."
+            exit 0
+          fi
+
+          echo "::error::soroban-sdk lock entry changed without an [sdk-bump] marker in the commit message."
+          exit 1
