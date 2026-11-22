@@ -3,10 +3,6 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-// Tests written against the older direct-call API, kept until ported to the client API in `tests`.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod legacy_tests;
-
 use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
@@ -101,6 +97,9 @@ impl ComplyRailContract {
     ) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
+
+        // Re-registering an existing VASP would overwrite its status and expiry (#73).
+        assert!(!env.storage().instance().has(&vasp), "vasp already registered");
 
         let expiry = expiry_days.map(|days| {
             days.checked_mul(86400)

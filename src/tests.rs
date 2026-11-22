@@ -83,7 +83,7 @@ fn test_register_vasp() {
 
     register(&env, &client, &admin, &vasp, None);
 
-    let entry = client.get_vasp(&vasp).unwrap();
+    let entry = client.get_vasp(&vasp);
     assert_eq!(entry.address, vasp);
     assert_eq!(entry.status, VaspStatus::Active);
     assert_eq!(entry.expires_at, None);
@@ -180,7 +180,7 @@ fn test_reregister_active_vasp_fails() {
     let vasp = Address::generate(&env);
 
     register(&env, &client, &admin, &vasp, Some(30));
-    let before = client.get_vasp(&vasp).unwrap();
+    let before = client.get_vasp(&vasp);
 
     env.ledger().set_timestamp(START + DAY);
     let result = client.try_register_vasp(
@@ -193,7 +193,7 @@ fn test_reregister_active_vasp_fails() {
     );
     assert!(result.is_err());
 
-    let after = client.get_vasp(&vasp).unwrap();
+    let after = client.get_vasp(&vasp);
     assert_eq!(after.name, before.name);
     assert_eq!(after.jurisdiction, before.jurisdiction);
     assert_eq!(after.public_key, before.public_key);
@@ -208,7 +208,7 @@ fn test_reregister_revoked_vasp_fails_and_status_survives() {
 
     register(&env, &client, &admin, &vasp, Some(30));
     client.update_vasp_status(&admin, &vasp, &VaspStatus::Revoked);
-    let before = client.get_vasp(&vasp).unwrap();
+    let before = client.get_vasp(&vasp);
 
     let result = client.try_register_vasp(
         &admin,
@@ -220,7 +220,7 @@ fn test_reregister_revoked_vasp_fails_and_status_survives() {
     );
     assert!(result.is_err());
 
-    let after = client.get_vasp(&vasp).unwrap();
+    let after = client.get_vasp(&vasp);
     assert_eq!(after.status, VaspStatus::Revoked);
     assert_eq!(after.expires_at, before.expires_at);
     assert_eq!(after.added_at, before.added_at);
@@ -243,7 +243,7 @@ fn test_reregister_suspended_vasp_fails_and_status_survives() {
         &None,
     );
     assert!(result.is_err());
-    assert_eq!(client.get_vasp(&vasp).unwrap().status, VaspStatus::Suspended);
+    assert_eq!(client.get_vasp(&vasp).status, VaspStatus::Suspended);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,10 +257,10 @@ fn test_renew_by_outsider_fails() {
     let outsider = Address::generate(&env);
 
     register(&env, &client, &admin, &vasp, Some(30));
-    let before = client.get_vasp(&vasp).unwrap().expires_at;
+    let before = client.get_vasp(&vasp).expires_at;
 
     assert!(client.try_renew_vasp_registration(&outsider, &vasp, &365).is_err());
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, before);
+    assert_eq!(client.get_vasp(&vasp).expires_at, before);
 }
 
 #[test]
@@ -271,10 +271,10 @@ fn test_renew_by_other_registered_vasp_fails() {
 
     register(&env, &client, &admin, &vasp, Some(30));
     register(&env, &client, &admin, &other_vasp, Some(30));
-    let before = client.get_vasp(&vasp).unwrap().expires_at;
+    let before = client.get_vasp(&vasp).expires_at;
 
     assert!(client.try_renew_vasp_registration(&other_vasp, &vasp, &365).is_err());
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, before);
+    assert_eq!(client.get_vasp(&vasp).expires_at, before);
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn test_renew_by_admin_succeeds() {
     register(&env, &client, &admin, &vasp, Some(30));
     client.renew_vasp_registration(&admin, &vasp, &10);
 
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, Some(START + 40 * DAY));
+    assert_eq!(client.get_vasp(&vasp).expires_at, Some(START + 40 * DAY));
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn test_renew_by_vasp_itself_succeeds() {
     register(&env, &client, &admin, &vasp, Some(30));
     client.renew_vasp_registration(&vasp, &vasp, &10);
 
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, Some(START + 40 * DAY));
+    assert_eq!(client.get_vasp(&vasp).expires_at, Some(START + 40 * DAY));
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn test_renew_active_extends_from_current_expiry() {
     env.ledger().set_timestamp(START + 10 * DAY);
     client.renew_vasp_registration(&admin, &vasp, &15);
 
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, Some(START + 45 * DAY));
+    assert_eq!(client.get_vasp(&vasp).expires_at, Some(START + 45 * DAY));
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn test_renew_expired_extends_from_now() {
     env.ledger().set_timestamp(now);
     client.renew_vasp_registration(&admin, &vasp, &10);
 
-    let expires_at = client.get_vasp(&vasp).unwrap().expires_at.unwrap();
+    let expires_at = client.get_vasp(&vasp).expires_at.unwrap();
     assert_eq!(expires_at, now + 10 * DAY);
     assert!(expires_at > now);
 }
@@ -334,7 +334,7 @@ fn test_renew_unlimited_stays_unlimited() {
     register(&env, &client, &admin, &vasp, None);
     client.renew_vasp_registration(&admin, &vasp, &30);
 
-    assert_eq!(client.get_vasp(&vasp).unwrap().expires_at, None);
+    assert_eq!(client.get_vasp(&vasp).expires_at, None);
 }
 
 // ---------------------------------------------------------------------------
