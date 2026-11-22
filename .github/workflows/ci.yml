@@ -23,6 +23,7 @@ jobs:
           name: complyrail_contracts-wasm
           path: target/wasm32v1-none/release/complyrail_contracts.wasm
           if-no-files-found: error
+      - run: cargo test
 
   lint:
     runs-on: ubuntu-latest

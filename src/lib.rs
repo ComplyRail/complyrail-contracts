@@ -3,6 +3,10 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
+// Tests written against the older direct-call API, kept until ported to the client API in `tests`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod legacy_tests;
+
 use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
 use types::*;
 
@@ -129,15 +133,24 @@ impl ComplyRailContract {
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
         caller.require_auth();
+        assert!(
+            Self::is_admin(&env, &caller) || caller == vasp,
+            "unauthorized: only admin or the vasp may renew"
+        );
 
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
 
-        let current_expiry = entry.expires_at.unwrap_or(env.ledger().timestamp());
-        let extension = extension_days
-            .checked_mul(86400)
-            .and_then(|secs| current_expiry.checked_add(secs))
-            .expect("expiry overflow");
-        entry.expires_at = Some(extension);
+        // Unlimited registrations stay unlimited. Limited ones extend from
+        // max(now, expires_at) so renewing an expired VASP makes it valid again.
+        if let Some(current_expiry) = entry.expires_at {
+            let now = env.ledger().timestamp();
+            let base = if current_expiry > now { current_expiry } else { now };
+            let extension = extension_days
+                .checked_mul(86400)
+                .and_then(|secs| base.checked_add(secs))
+                .expect("expiry overflow");
+            entry.expires_at = Some(extension);
+        }
         entry.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&vasp, &entry);
@@ -525,13 +538,15 @@ fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
 }
 
 impl ComplyRailContract {
-    fn require_admin(env: &Env, caller: &Address) {
+    fn is_admin(env: &Env, caller: &Address) -> bool {
         // A keyed lookup instead of a scan of the admin list (#68).
-        let is_admin: bool = env.storage()
+        env.storage()
             .instance()
             .get(&(symbol_short!("admin"), caller.clone()))
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
 
-        assert!(is_admin, "unauthorized: not an admin");
+    fn require_admin(env: &Env, caller: &Address) {
+        assert!(Self::is_admin(env, caller), "unauthorized: not an admin");
     }
 }
