@@ -340,6 +340,8 @@ impl ComplyRailContract {
             .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
         payment_ids.push_back(payment_id.clone());
         env.storage().instance().set(&symbol_short!("pay_ids"), &payment_ids);
+        Self::index_payment(&env, &from_vasp, true, &payment_id);
+        Self::index_payment(&env, &to_vasp, false, &payment_id);
 
         // Amount, parties and asset are in the event so indexers need no lookup (#38).
         env.events().publish(
@@ -388,23 +390,29 @@ impl ComplyRailContract {
         vasp_address: Address,
         as_sender: bool,
     ) -> soroban_sdk::Vec<BytesN<32>> {
-        let payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
-            .instance()
-            .get(&symbol_short!("pay_ids"))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
-        let mut results = soroban_sdk::Vec::new(&env);
+        // Read the per-VASP index instead of scanning every payment (#62).
+        env.storage()
+            .persistent()
+            .get(&(symbol_short!("pidx"), vasp_address, as_sender))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
+    }
 
-        for payment_id in payment_ids.iter() {
-            if let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) {
-                if as_sender && payment.from_vasp == vasp_address {
-                    results.push_back(payment_id);
-                } else if !as_sender && payment.to_vasp == vasp_address {
-                    results.push_back(payment_id);
-                }
-            }
+    /// One page of `get_payments_by_vasp`, starting at `start` and holding at most
+    /// `limit` IDs (#63). Callers walk the index with increasing `start`.
+    pub fn get_payments_by_vasp_page(
+        env: Env,
+        vasp_address: Address,
+        as_sender: bool,
+        start: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<BytesN<32>> {
+        let ids = Self::get_payments_by_vasp(env.clone(), vasp_address, as_sender);
+        let mut page = soroban_sdk::Vec::new(&env);
+        let end = start.saturating_add(limit).min(ids.len());
+        for i in start..end {
+            page.push_back(ids.get(i).unwrap());
         }
-
-        results
+        page
     }
 
     pub fn submit_attestation(
@@ -584,9 +592,22 @@ impl ComplyRailContract {
         pruned
     }
 
+    /// Add a payment to a VASP's sender or receiver index (#62).
+    fn index_payment(env: &Env, vasp: &Address, as_sender: bool, payment_id: &BytesN<32>) {
+        let key = (symbol_short!("pidx"), vasp.clone(), as_sender);
+        let mut ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+        ids.push_back(payment_id.clone());
+        env.storage().persistent().set(&key, &ids);
+        env.storage().persistent().extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
+    }
+
     fn generate_payment_id(env: &Env) -> BytesN<32> {
         let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
         env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
+        env.storage().instance().extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         // Hash the counter with ledger state so IDs are not sequential (#37).
         // Callers find payments through the index, not by guessing IDs.
