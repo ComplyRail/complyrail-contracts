@@ -78,7 +78,31 @@ impl ComplyRailContract {
         };
 
         env.storage().instance().set(&vasp, &entry);
+
+        // Keep an enumerable index of registered VASPs (#41).
+        let mut vasps: soroban_sdk::Vec<Address> = env.storage()
+            .instance()
+            .get(&symbol_short!("vasps"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        let mut known = false;
+        for existing in vasps.iter() {
+            if existing == vasp {
+                known = true;
+            }
+        }
+        if !known {
+            vasps.push_back(vasp.clone());
+            env.storage().instance().set(&symbol_short!("vasps"), &vasps);
+        }
+
         env.events().publish((symbol_short!("vasp_reg"),), &vasp);
+    }
+
+    pub fn list_vasps(env: Env) -> soroban_sdk::Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("vasps"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
     }
 
     pub fn renew_vasp_registration(env: Env, caller: Address, vasp: Address, extension_days: u64) {
@@ -100,6 +124,26 @@ impl ComplyRailContract {
         let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
         entry.status = status;
         env.storage().instance().set(&vasp, &entry);
+
+        // Pending payments touching a suspended or revoked VASP are held (#44).
+        if entry.status != VaspStatus::Active {
+            let payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+                .instance()
+                .get(&symbol_short!("pay_ids"))
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+            for payment_id in payment_ids.iter() {
+                let mut payment: PaymentRecord = env.storage()
+                    .instance()
+                    .get(&payment_id)
+                    .expect("payment not found");
+                if payment.status == PaymentStatus::Pending
+                    && (payment.from_vasp == vasp || payment.to_vasp == vasp)
+                {
+                    payment.status = PaymentStatus::Held;
+                    env.storage().instance().set(&payment_id, &payment);
+                }
+            }
+        }
 
         env.events().publish((symbol_short!("vasp_upd"),), &vasp);
     }
@@ -184,6 +228,14 @@ impl ComplyRailContract {
         };
 
         env.storage().instance().set(&payment_id, &payment);
+
+        let mut payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
+            .instance()
+            .get(&symbol_short!("pay_ids"))
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+        payment_ids.push_back(payment_id.clone());
+        env.storage().instance().set(&symbol_short!("pay_ids"), &payment_ids);
+
         env.events().publish((symbol_short!("pay_sub"),), &payment_id);
 
         payment_id
@@ -253,6 +305,15 @@ impl ComplyRailContract {
         assert!(from_vasp_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(caller_vasp == payment.to_vasp, "only beneficiary vasp can attest");
 
+        // Expired registrations cannot attest, matching submit_payment (#42).
+        let now = env.ledger().timestamp();
+        if let Some(expires) = to_vasp_entry.expires_at {
+            assert!(now < expires, "to_vasp registration expired");
+        }
+        if let Some(expires) = from_vasp_entry.expires_at {
+            assert!(now < expires, "from_vasp registration expired");
+        }
+
         assert!(&message_hash.to_array() != &[0u8; 32], "message_hash cannot be empty");
 
         payment.status = PaymentStatus::Released;
@@ -274,6 +335,16 @@ impl ComplyRailContract {
             .expect("payment not found");
 
         assert!(payment.status != PaymentStatus::Released, "payment already released");
+
+        // The beneficiary must still be eligible at release time (#43).
+        let to_entry: VaspEntry = env.storage()
+            .instance()
+            .get(&payment.to_vasp)
+            .expect("to_vasp not registered");
+        assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
+        if let Some(expires) = to_entry.expires_at {
+            assert!(env.ledger().timestamp() < expires, "to_vasp registration expired");
+        }
 
         payment.status = PaymentStatus::Released;
         payment.resolved_at = Some(env.ledger().timestamp());
