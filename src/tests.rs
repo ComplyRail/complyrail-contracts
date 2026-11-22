@@ -372,6 +372,98 @@ mod tests {
     }
 
     #[test]
+    fn test_network_arg_typo_rejected() {
+        // A misspelled network value (e.g. "testnett") must be rejected by the
+        // fail-closed argument parsing in deploy.sh / interact.sh rather than
+        // silently falling through to the public network.
+        let script = r#"
+            set -e
+            parse_network() {
+                case "$1" in
+                    testnet) echo "testnet" ;;
+                    public)
+                        if [ "$2" = "--mainnet" ]; then echo "public"; else
+                            echo "error: 'public' requires explicit --mainnet flag" >&2
+                            return 1
+                        fi
+                        ;;
+                    *)
+                        echo "error: unknown network '$1' (expected 'testnet' or 'public')" >&2
+                        return 1
+                        ;;
+                esac
+            }
+            parse_network testnett
+        "#;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .status()
+            .expect("failed to run shell");
+        assert!(!status.success(), "misspelled network 'testnett' must be rejected");
+    }
+
+    #[test]
+    fn test_public_network_requires_mainnet_flag() {
+        // "public" without an explicit --mainnet flag must fail closed.
+        let script = r#"
+            set -e
+            parse_network() {
+                case "$1" in
+                    testnet) echo "testnet" ;;
+                    public)
+                        if [ "$2" = "--mainnet" ]; then echo "public"; else
+                            echo "error: 'public' requires explicit --mainnet flag" >&2
+                            return 1
+                        fi
+                        ;;
+                    *)
+                        echo "error: unknown network '$1' (expected 'testnet' or 'public')" >&2
+                        return 1
+                        ;;
+                esac
+            }
+            parse_network public
+        "#;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .status()
+            .expect("failed to run shell");
+        assert!(!status.success(), "'public' without --mainnet must be rejected");
+    }
+
+    #[test]
+    fn test_public_network_with_mainnet_flag_accepted() {
+        // "public" with an explicit --mainnet flag is accepted.
+        let script = r#"
+            set -e
+            parse_network() {
+                case "$1" in
+                    testnet) echo "testnet" ;;
+                    public)
+                        if [ "$2" = "--mainnet" ]; then echo "public"; else
+                            echo "error: 'public' requires explicit --mainnet flag" >&2
+                            return 1
+                        fi
+                        ;;
+                    *)
+                        echo "error: unknown network '$1' (expected 'testnet' or 'public')" >&2
+                        return 1
+                        ;;
+                esac
+            }
+            parse_network public --mainnet
+        "#;
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .status()
+            .expect("failed to run shell");
+        assert!(status.success(), "'public --mainnet' must be accepted");
+    }
+
+    #[test]
     fn test_reject_payment() {
         let env = Env::default();
         let admin = Address::random(&env);

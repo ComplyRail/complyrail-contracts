@@ -3,12 +3,52 @@ set -e
 
 # ComplyRail Contracts Interaction Script
 
+# Check Stellar CLI is available
+if ! command -v stellar >/dev/null 2>&1; then
+  echo "❌ Error: stellar CLI not found"
+  echo "Install it from https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli"
+  exit 1
+fi
+echo "🔧 $(stellar --version)"
+
 NETWORK="${1:-testnet}"
 ACTION="${2:-status}"
+
+# Validate network argument (fail closed)
+case "$NETWORK" in
+  testnet)
+    ;;
+  public)
+    if [ "$3" != "--mainnet" ]; then
+      echo "❌ Error: 'public' requires an explicit --mainnet flag"
+      echo "Run: ./interact.sh public --mainnet <action> [args...]"
+      exit 1
+    fi
+    shift
+    ;;
+  *)
+    echo "❌ Error: invalid network '$NETWORK'"
+    echo "Accepted values: testnet, public"
+    exit 1
+    ;;
+esac
 
 if [ -z "$CONTRACT_ID" ]; then
   echo "❌ Error: CONTRACT_ID not set"
   echo "Run: export CONTRACT_ID=CXXXXXXX..."
+  exit 1
+fi
+
+# Require an explicit signer identity
+if [ -z "$SIGNER" ]; then
+  echo "❌ Error: SIGNER not set"
+  echo "Run: export SIGNER=<stellar identity name>"
+  exit 1
+fi
+
+if ! stellar keys address "$SIGNER" >/dev/null 2>&1; then
+  echo "❌ Error: signer identity '$SIGNER' does not exist"
+  echo "Create it with: stellar keys generate $SIGNER"
   exit 1
 fi
 
@@ -23,14 +63,15 @@ fi
 
 echo "📋 Contract: $CONTRACT_ID"
 echo "🌐 Network: $NETWORK"
+echo "🔑 Signer: $SIGNER"
 echo ""
 
 case "$ACTION" in
   status)
     echo "Getting contract status..."
-    soroban contract invoke \
+    stellar contract invoke \
       --id "$CONTRACT_ID" \
-      --source alice \
+      --source "$SIGNER" \
       --network "$NETWORK" \
       -- get_contract_info
     ;;
@@ -42,9 +83,9 @@ case "$ACTION" in
     echo "Address: $VASP_ADDRESS"
     echo "Jurisdiction: $JURISDICTION"
 
-    soroban contract invoke \
+    stellar contract invoke \
       --id "$CONTRACT_ID" \
-      --source alice \
+      --source "$SIGNER" \
       --network "$NETWORK" \
       -- register_vasp \
       --vasp_address "$VASP_ADDRESS" \
@@ -65,9 +106,9 @@ case "$ACTION" in
     echo "To: $TO_VASP"
     echo "Amount: $AMOUNT"
 
-    soroban contract invoke \
+    stellar contract invoke \
       --id "$CONTRACT_ID" \
-      --source alice \
+      --source "$SIGNER" \
       --network "$NETWORK" \
       -- submit_payment \
       --from_vasp "$FROM_VASP" \
@@ -84,9 +125,9 @@ case "$ACTION" in
     JURISDICTION="${4:-US}"
     echo "Getting threshold..."
 
-    soroban contract invoke \
+    stellar contract invoke \
       --id "$CONTRACT_ID" \
-      --source alice \
+      --source "$SIGNER" \
       --network "$NETWORK" \
       -- get_threshold \
       --asset "$ASSET" \
@@ -99,9 +140,9 @@ case "$ACTION" in
     AMOUNT="${5:-100000}"
     echo "Setting threshold..."
 
-    soroban contract invoke \
+    stellar contract invoke \
       --id "$CONTRACT_ID" \
-      --source alice \
+      --source "$SIGNER" \
       --network "$NETWORK" \
       -- set_threshold \
       --asset "$ASSET" \
@@ -112,7 +153,11 @@ case "$ACTION" in
     ;;
 
   *)
-    echo "Usage: ./interact.sh [testnet|public] [action] [args...]"
+    echo "Usage: ./interact.sh [testnet|public] [--mainnet] [action] [args...]"
+    echo ""
+    echo "Environment:"
+    echo "  CONTRACT_ID - Contract ID to interact with (required)"
+    echo "  SIGNER      - Stellar identity name used to sign (required)"
     echo ""
     echo "Actions:"
     echo "  status                  - Get contract info"
@@ -125,6 +170,7 @@ case "$ACTION" in
     echo "  ./interact.sh testnet status"
     echo "  ./interact.sh testnet register-vasp GXXXXXXX US"
     echo "  ./interact.sh testnet submit-payment GXXXXXXX1 GXXXXXXX2 5000"
+    echo "  ./interact.sh public --mainnet status"
     exit 1
     ;;
 esac

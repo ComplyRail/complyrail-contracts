@@ -14,7 +14,7 @@ docker run --rm -v $(pwd):/workspace complyrail-build:latest
 
 **Or locally:**
 ```bash
-# Install Rust and Soroban CLI
+# Install Rust and Stellar CLI
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 rustup toolchain install 1.85.0
@@ -29,13 +29,17 @@ cargo install --locked stellar-cli --version 22.8.1
 
 ```bash
 # Generate new keypair (save the secret key securely!)
-soroban keys generate --network testnet alice
+stellar keys generate --network testnet alice
 ```
 
 Or use existing secret key:
 ```bash
-soroban keys add alice --secret-key SXXX...
+stellar keys add alice --secret-key SXXX...
 ```
+
+The deployment scripts check the Stellar CLI version at startup and abort if
+`stellar` is not installed or too old. Upgrade with
+`cargo install --locked stellar-cli --force` if the check fails.
 
 ## Deployment Steps
 
@@ -59,7 +63,7 @@ export SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 
 # Deploy (keep the contract ID!)
-CONTRACT_ID=$(soroban contract deploy \
+CONTRACT_ID=$(stellar contract deploy \
   --wasm target/wasm32v1-none/release/complyrail_contracts.wasm \
   --source alice \
   --network testnet)
@@ -70,23 +74,44 @@ echo "Contract ID: $CONTRACT_ID"
 ### 3. Initialize Contract
 
 ```bash
-# Set contract admin(s) - multiple admins supported
-soroban contract invoke \
+# Set the contract admin
+stellar contract invoke \
   --id $CONTRACT_ID \
   --source alice \
   --network testnet \
-  -- set_admin \
+  -- initialize \
   --admin "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+```
+
+### Network Argument Handling
+
+The scripts accept only `testnet` or `public` as the network argument and
+reject anything else. Deploying to `public` (mainnet) additionally requires
+the `--mainnet` flag as an explicit safety confirmation:
+
+```bash
+./deploy.sh testnet
+./deploy.sh public --mainnet
 ```
 
 ## Interacting with Contract
 
+`interact.sh` signs every invocation with the identity named in the
+`STELLAR_SIGNER` environment variable. There is no default: the script exits
+with an error if `STELLAR_SIGNER` is unset, and also fails if the named
+identity does not exist in the local Stellar CLI keystore.
+
+```bash
+# Required: the identity used to sign every invocation
+export STELLAR_SIGNER=alice
+```
+
 ### Register a VASP
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
-  --source alice \
+  --source $STELLAR_SIGNER \
   --network testnet \
   -- register_vasp \
   --vasp_address "GXXXXXXX..." \
@@ -96,9 +121,9 @@ soroban contract invoke \
 ### Submit a Payment
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
-  --source alice \
+  --source $STELLAR_SIGNER \
   --network testnet \
   -- submit_payment \
   --from_vasp "GXXXXXXX..." \
@@ -111,9 +136,9 @@ soroban contract invoke \
 ### Check Payment Status
 
 ```bash
-soroban contract invoke \
+stellar contract invoke \
   --id $CONTRACT_ID \
-  --source alice \
+  --source $STELLAR_SIGNER \
   --network testnet \
   -- get_payment_status \
   --payment_id "payment_123"
@@ -122,7 +147,7 @@ soroban contract invoke \
 ## Contract Functions
 
 ### Admin Functions
-- `set_admin(admin: Address)` - Add admin
+- `initialize(admin: Address)` - Set the contract admin
 - `set_threshold(asset, jurisdiction, amount)` - Set compliance threshold
 - `release_payment(payment_id)` - Approve payment
 - `reject_payment(payment_id, reason)` - Reject payment
@@ -156,11 +181,14 @@ export SOROBAN_RPC_URL=https://soroban.stellar.org
 export SOROBAN_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
 
 # Deploy with formal audit approval
-soroban contract deploy \
+stellar contract deploy \
   --wasm target/wasm32v1-none/release/complyrail_contracts.wasm \
   --source mainnet_admin \
   --network public
 ```
+
+Mainnet deployments must pass `--mainnet` to the scripts as an explicit
+confirmation; without it the scripts refuse to target `public`.
 
 ## Troubleshooting
 
@@ -168,7 +196,7 @@ soroban contract deploy \
 - Account needs more XLM for fees
 
 **"Contract compile error"**
-- Check soroban-sdk version matches contract code
+- Check stellar-sdk version matches contract code
 - Rebuild with `cargo clean && cargo build`
 
 **"Unauthorized"**
@@ -186,11 +214,14 @@ export SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
 export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 export SOROBAN_ACCOUNT_ID="GXXXXXXX..."
 export CONTRACT_ID="CXXXXXXX..."
+
+# Required by interact.sh: identity used to sign invocations (no default)
+export STELLAR_SIGNER="alice"
 ```
 
 ## Resources
 
-- Soroban Docs: https://developers.stellar.org/learn/build/smart-contracts
-- Soroban CLI: https://github.com/stellar/rs-soroban-cli
+- Stellar Docs: https://developers.stellar.org/learn/build/smart-contracts
+- Stellar CLI: https://github.com/stellar/stellar-cli
 - Testnet Explorer: https://testnet.stellar.expert/
 - Mainnet Explorer: https://stellar.expert/
