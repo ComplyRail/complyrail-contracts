@@ -61,6 +61,19 @@ impl ComplyRailContract {
         env.events().publish((symbol_short!("adm_add"),), &new_admin);
     }
 
+    /// Emergency switch: while frozen, no new payments can be submitted (#49).
+    pub fn set_registry_frozen(env: Env, caller: Address, frozen: bool) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        env.storage().instance().set(&symbol_short!("frozen"), &frozen);
+        env.events().publish((symbol_short!("frozen"),), &frozen);
+    }
+
+    pub fn is_registry_frozen(env: Env) -> bool {
+        env.storage().instance().get(&symbol_short!("frozen")).unwrap_or(false)
+    }
+
     pub fn get_admins(env: Env) -> soroban_sdk::Vec<Address> {
         env.storage()
             .instance()
@@ -205,7 +218,8 @@ impl ComplyRailContract {
             }
         }
 
-        env.events().publish((symbol_short!("vasp_upd"),), &vasp);
+        // Typed payload: the VASP and its new status, so consumers need no lookup (#50).
+        env.events().publish((symbol_short!("vasp_upd"),), (vasp.clone(), entry.status));
     }
 
     /// Returns `VaspNotFound` instead of `None` for an unknown VASP (#46).
@@ -226,7 +240,8 @@ impl ComplyRailContract {
         thresholds.set(key, amount);
 
         env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
-        env.events().publish((symbol_short!("thr_set"),), &asset);
+        // The event carries the rule's jurisdiction and amount, not only the asset (#51).
+        env.events().publish((symbol_short!("thr_set"),), (asset.clone(), jurisdiction, amount));
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
@@ -235,8 +250,13 @@ impl ComplyRailContract {
             .get(&symbol_short!("thresh"))
             .unwrap_or_else(|| Map::new(&env));
 
+        // A rule set for jurisdiction "*" applies wherever no specific rule exists (#52).
         let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.get(key)
+        if let Some(amount) = thresholds.get(key) {
+            return Some(amount);
+        }
+        let wildcard = format_threshold_key(&env, &asset, &String::from_str(&env, "*"));
+        thresholds.get(wildcard)
     }
 
     pub fn submit_payment(
@@ -248,6 +268,7 @@ impl ComplyRailContract {
         amount: i128,
     ) -> BytesN<32> {
         from_vasp.require_auth();
+        assert!(!Self::is_registry_frozen(env.clone()), "registry is frozen");
 
         let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
         let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
