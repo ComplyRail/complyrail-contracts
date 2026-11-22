@@ -33,6 +33,9 @@ pub struct ComplyRailContract;
 #[contractimpl]
 impl ComplyRailContract {
     pub fn initialize(env: Env, admin: Address) {
+        // Only the first call may set the admin list (#1).
+        assert!(!env.storage().instance().has(&symbol_short!("init")), "already initialized");
+        env.storage().instance().set(&symbol_short!("init"), &true);
         admin.require_auth();
         let mut admins: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
         env.storage().instance().set(&(symbol_short!("admin"), admin.clone()), &true);
@@ -109,6 +112,7 @@ impl ComplyRailContract {
 
         // Re-registering an existing VASP would overwrite its status and expiry (#73).
         assert!(!env.storage().persistent().has(&vasp), "vasp already registered");
+        assert!(!Self::is_admin(&env, &vasp), "an admin cannot be registered as a vasp");
 
         let expiry = expiry_days.map(|days| {
             days.checked_mul(86400)
@@ -209,6 +213,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
+        assert!(entry.status.can_transition_to(&status), "invalid vasp status transition");
         entry.status = status;
         entry.updated_at = env.ledger().timestamp();
         env.storage().persistent().set(&vasp, &entry);
@@ -291,6 +296,10 @@ impl ComplyRailContract {
 
         // A VASP cannot pay itself (#31).
         assert!(from_vasp != to_vasp, "from_vasp and to_vasp must differ");
+        assert!(
+            !Self::is_admin(&env, &from_vasp) && !Self::is_admin(&env, &to_vasp),
+            "an admin cannot be a payment party"
+        );
         assert!(!Self::is_registry_frozen(env.clone()), "registry is frozen");
 
         let from_entry: VaspEntry = env.storage().persistent().get(&from_vasp).expect("from_vasp not registered");

@@ -8,6 +8,26 @@ pub enum VaspStatus {
     Revoked,
 }
 
+impl VaspStatus {
+    /// Returns true if transitioning from `self` to `next` is allowed.
+    ///
+    /// Allowed transitions:
+    /// - Active    -> Suspended, Revoked
+    /// - Suspended -> Active, Revoked
+    /// - Revoked   -> (terminal, no transitions)
+    ///
+    /// Setting the same status again is always disallowed (#4).
+    pub fn can_transition_to(&self, next: &VaspStatus) -> bool {
+        matches!(
+            (self, next),
+            (VaspStatus::Active, VaspStatus::Suspended)
+                | (VaspStatus::Active, VaspStatus::Revoked)
+                | (VaspStatus::Suspended, VaspStatus::Active)
+                | (VaspStatus::Suspended, VaspStatus::Revoked)
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 #[contracttype]
 pub struct VaspEntry {

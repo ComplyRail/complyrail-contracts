@@ -403,3 +403,54 @@ fn test_self_payment_rejected() {
     let result = client.try_submit_payment(&vasp, &vasp, &beneficiary, &asset, &(THRESHOLD / 2));
     assert!(result.is_err());
 }
+
+#[test]
+fn test_initialize_twice_fails() {
+    let (_env, client, admin) = setup();
+    let result = client.try_initialize(&admin);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_status_transition_matrix() {
+    let (env, client, admin) = setup();
+    let vasp = Address::generate(&env);
+    register(&env, &client, &admin, &vasp, None);
+
+    // Active -> Suspended is allowed, Suspended -> Suspended is a no-op and is refused.
+    client.update_vasp_status(&admin, &vasp, &VaspStatus::Suspended);
+    assert!(client.try_update_vasp_status(&admin, &vasp, &VaspStatus::Suspended).is_err());
+
+    // Revoked is terminal.
+    client.update_vasp_status(&admin, &vasp, &VaspStatus::Revoked);
+    assert!(client.try_update_vasp_status(&admin, &vasp, &VaspStatus::Active).is_err());
+}
+
+#[test]
+fn test_admin_cannot_be_registered_as_vasp() {
+    let (_env, client, admin) = setup();
+    let name = String::from_str(&_env, "Admin VASP");
+    let result = client.try_register_vasp(
+        &admin,
+        &admin,
+        &name,
+        &String::from_str(&_env, "US"),
+        &BytesN::from_array(&_env, &[0u8; 32]),
+        &None,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_admin_cannot_be_payment_party() {
+    let (env, client, admin) = setup();
+    let vasp = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let asset = Address::generate(&env);
+    register(&env, &client, &admin, &vasp, None);
+    client.set_threshold(&admin, &asset, &String::from_str(&env, "US"), &THRESHOLD);
+
+    let result = client.try_submit_payment(&admin, &vasp, &beneficiary, &asset, &(THRESHOLD / 2));
+    assert!(result.is_err());
+}
+
