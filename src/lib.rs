@@ -58,7 +58,7 @@ impl ComplyRailContract {
         env.storage().instance().set(&(symbol_short!("admin"), new_admin.clone()), &true);
         admins.push_back(new_admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
-        env.events().publish((symbol_short!("adm_add"),), &new_admin);
+        env.events().publish((symbol_short!("adm_add"),), (new_admin.clone(), caller));
     }
 
     /// Emergency switch: while frozen, no new payments can be submitted (#49).
@@ -87,7 +87,7 @@ impl ComplyRailContract {
 
         assert!(threshold > 0, "threshold must be positive");
         env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-        env.events().publish((symbol_short!("appr_th"),), &threshold);
+        env.events().publish((symbol_short!("appr_th"),), (threshold, caller));
     }
 
     pub fn register_vasp(
@@ -137,7 +137,7 @@ impl ComplyRailContract {
             env.storage().instance().set(&symbol_short!("vasps"), &vasps);
         }
 
-        env.events().publish((symbol_short!("vasp_reg"),), &vasp);
+        env.events().publish((symbol_short!("vasp_reg"),), (vasp.clone(), caller));
     }
 
     pub fn list_vasps(env: Env) -> soroban_sdk::Vec<Address> {
@@ -170,7 +170,8 @@ impl ComplyRailContract {
         entry.updated_at = env.ledger().timestamp();
 
         env.storage().instance().set(&vasp, &entry);
-        env.events().publish((symbol_short!("vasp_renew"),), &vasp);
+        // `symbol_short!` allows at most 9 characters, so build this 10-character topic with `Symbol::new`.
+        env.events().publish((soroban_sdk::Symbol::new(&env, "vasp_renew"),), (vasp.clone(), caller));
     }
 
     /// Set a registration to expire `expires_in_seconds` from now (#47).
@@ -231,32 +232,33 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
+        assert!(amount >= 0, "threshold must not be negative");
 
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        thresholds.set(key, amount);
-
-        env.storage().instance().set(&symbol_short!("thresh"), &thresholds);
+        // One storage entry per rule, so setting one rule does not rewrite the rest (#55).
+        env.storage().instance().set(&(symbol_short!("thr"), asset.clone(), jurisdiction.clone()), &amount);
         // The event carries the rule's jurisdiction and amount, not only the asset (#51).
         env.events().publish((symbol_short!("thr_set"),), (asset.clone(), jurisdiction, amount));
     }
 
     pub fn get_threshold(env: Env, asset: Address, jurisdiction: String) -> Option<i128> {
-        let thresholds: Map<String, i128> = env.storage()
-            .instance()
-            .get(&symbol_short!("thresh"))
-            .unwrap_or_else(|| Map::new(&env));
-
         // A rule set for jurisdiction "*" applies wherever no specific rule exists (#52).
-        let key = format_threshold_key(&env, &asset, &jurisdiction);
-        if let Some(amount) = thresholds.get(key) {
+        if let Some(amount) = env.storage().instance().get(&(symbol_short!("thr"), asset.clone(), jurisdiction)) {
             return Some(amount);
         }
-        let wildcard = format_threshold_key(&env, &asset, &String::from_str(&env, "*"));
-        thresholds.get(wildcard)
+        let wildcard = String::from_str(&env, "*");
+        env.storage().instance().get(&(symbol_short!("thr"), asset, wildcard))
+    }
+
+    /// Remove a threshold rule, so the asset and jurisdiction no longer have one (#54).
+    pub fn remove_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let key = (symbol_short!("thr"), asset.clone(), jurisdiction.clone());
+        assert!(env.storage().instance().has(&key), "threshold not found");
+        env.storage().instance().remove(&key);
+
+        env.events().publish((symbol_short!("thr_del"),), (asset, caller, jurisdiction));
     }
 
     pub fn submit_payment(
@@ -446,7 +448,7 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
 
         env.storage().instance().set(&payment_id, &payment);
-        env.events().publish((symbol_short!("att_sub"),), &payment_id);
+        env.events().publish((symbol_short!("att_sub"),), (payment_id.clone(), caller_vasp));
     }
 
     pub fn release_payment(env: Env, caller: Address, payment_id: BytesN<32>, reason: String) {
@@ -566,12 +568,6 @@ impl ComplyRailContract {
         seed.extend_from_slice(&env.ledger().sequence().to_be_bytes());
         env.crypto().sha256(&seed).into()
     }
-}
-
-fn format_threshold_key(env: &Env, asset: &Address, jurisdiction: &String) -> String {
-    let asset_str = asset.to_string();
-    let combined = format!("{}:{}", asset_str, jurisdiction);
-    String::from_str(env, &combined)
 }
 
 fn jurisdiction_from_vasp(vasp: &VaspEntry) -> String {
