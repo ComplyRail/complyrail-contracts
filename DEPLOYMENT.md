@@ -76,11 +76,11 @@ To verify locally:
 
 ```bash
 # Build twice from a clean tree
-cargo clean && cargo build --release --target wasm32-unknown-unknown
-sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm > /tmp/hash1
+cargo clean && cargo build --release --target wasm32v1-none
+sha256sum target/wasm32v1-none/release/complyrail_contracts.wasm > /tmp/hash1
 
-cargo clean && cargo build --release --target wasm32-unknown-unknown
-sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm > /tmp/hash2
+cargo clean && cargo build --release --target wasm32v1-none
+sha256sum target/wasm32v1-none/release/complyrail_contracts.wasm > /tmp/hash2
 
 # The two hashes must match
 diff /tmp/hash1 /tmp/hash2 && echo "Reproducible build OK"
@@ -90,7 +90,7 @@ To check the deployed WASM against the published release hash:
 
 ```bash
 # Fetch the on-chain WASM for the deployed contract and hash it
-soroban contract fetch --id $CONTRACT_ID --network testnet \
+stellar contract fetch --id $CONTRACT_ID --network testnet \
   --out /tmp/deployed.wasm
 sha256sum /tmp/deployed.wasm
 
@@ -209,7 +209,17 @@ stellar contract invoke \
 - [ ] Generate new keypair for testnet testing
 - [ ] Fund testnet account: https://friendbot.stellar.org
 - [ ] Test all contract functions on testnet first
-- [ ] Verify contract bytecode before mainnet deployment
+- [ ] Verify contract bytecode before mainnet deployment:
+  ```bash
+  # Compute the SHA-256 hash of the local WASM binary
+  sha256sum target/wasm32v1-none/release/complyrail_contracts.wasm
+
+  # Fetch the on-chain WASM hash for the deployed contract
+  stellar contract info --id $CONTRACT_ID --network testnet | grep wasm_hash
+
+  # The two hashes must match before proceeding to mainnet.
+  # For reproducible builds, see the Docker build instructions above (Prerequisites).
+  ```
 - [ ] Confirm the deployed WASM SHA-256 matches the hash published in the release notes
 - [ ] Multi-sig setup for critical operations (recommended)
 - [ ] Audit contract code before mainnet
@@ -232,6 +242,47 @@ stellar contract deploy \
 
 Mainnet deployments must pass `--mainnet` to the scripts as an explicit
 confirmation; without it the scripts refuse to target `public`.
+
+## Rollback and Upgrade
+
+The ComplyRail contract is **not upgradeable**. There is no on-chain upgrade function; once deployed, the bytecode is fixed.
+
+### If a bug is found after deployment
+
+Because the contract cannot be patched in place, the recovery path is a full migration to a new contract:
+
+1. **Deploy a fixed contract** following the deployment steps above.
+2. **Pause new payments** in the old contract by removing registered VASPs or by stopping the off-chain systems that call it (there is no on-chain pause function).
+3. **Identify in-flight payments** that are still `Pending` in the old contract:
+   ```bash
+   # Inspect individual payment IDs to find any that remain pending
+   stellar contract invoke \
+     --id $OLD_CONTRACT_ID \
+     --source alice \
+     --network public \
+     -- get_payment_status \
+     --payment_id "<id>"
+   ```
+4. **Re-submit those payments** against the new contract so they can be completed there.
+5. **Re-register all VASPs** in the new contract:
+   ```bash
+   stellar contract invoke \
+     --id $NEW_CONTRACT_ID \
+     --source alice \
+     --network public \
+     -- register_vasp \
+     --vasp_address "<address>" \
+     --jurisdiction "<code>"
+   ```
+6. **Update all integrations** (SDKs, apps, off-chain services) to point to the new contract ID.
+7. **Communicate the migration** to all VASP operators and downstream consumers before switching over.
+
+The old contract remains on-chain and read-only; it cannot be deleted or paused automatically.
+
+### Deployment checklist addition
+
+- [ ] Record the deployed contract ID and the commit SHA it was built from
+- [ ] Keep the old contract ID available for read-only audit queries during migration
 
 ## Troubleshooting
 
