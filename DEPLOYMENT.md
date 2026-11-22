@@ -136,16 +136,34 @@ the `--mainnet` flag as an explicit safety confirmation:
 ./deploy.sh public --mainnet
 ```
 
+### 4. Record the Deployed Version
+
+After initialization, store the contract version alongside the contract ID in your deployment record:
+
+```bash
+# Query the on-chain version
+CONTRACT_VERSION=$(stellar contract invoke \
+  --id $CONTRACT_ID \
+  --source alice \
+  --network testnet \
+  -- version)
+
+echo "Contract ID: $CONTRACT_ID"
+echo "Contract version: $CONTRACT_VERSION"
+```
+
+Include both values in your deployment log or secrets manager so you can tell which build is running on each network.
+
 ## Interacting with Contract
 
 `interact.sh` signs every invocation with the identity named in the
-`STELLAR_SIGNER` environment variable. There is no default: the script exits
-with an error if `STELLAR_SIGNER` is unset, and also fails if the named
+`SIGNER` environment variable. There is no default: the script exits
+with an error if `SIGNER` is unset, and also fails if the named
 identity does not exist in the local Stellar CLI keystore.
 
 ```bash
 # Required: the identity used to sign every invocation
-export STELLAR_SIGNER=alice
+export SIGNER=alice
 ```
 
 ### Register a VASP
@@ -153,7 +171,7 @@ export STELLAR_SIGNER=alice
 ```bash
 stellar contract invoke \
   --id $CONTRACT_ID \
-  --source $STELLAR_SIGNER \
+  --source $SIGNER \
   --network testnet \
   -- register_vasp \
   --vasp_address "GXXXXXXX..." \
@@ -165,7 +183,7 @@ stellar contract invoke \
 ```bash
 stellar contract invoke \
   --id $CONTRACT_ID \
-  --source $STELLAR_SIGNER \
+  --source $SIGNER \
   --network testnet \
   -- submit_payment \
   --from_vasp "GXXXXXXX..." \
@@ -180,7 +198,7 @@ stellar contract invoke \
 ```bash
 stellar contract invoke \
   --id $CONTRACT_ID \
-  --source $STELLAR_SIGNER \
+  --source $SIGNER \
   --network testnet \
   -- get_payment_status \
   --payment_id "payment_123"
@@ -310,7 +328,7 @@ export SOROBAN_ACCOUNT_ID="GXXXXXXX..."
 export CONTRACT_ID="CXXXXXXX..."
 
 # Required by interact.sh: identity used to sign invocations (no default)
-export STELLAR_SIGNER="alice"
+export SIGNER="alice"
 ```
 
 ## Resources

@@ -383,3 +383,9 @@ fn test_release_by_third_party_vasp_fails() {
 fn test_release_by_outsider_fails() {
     assert_release_refused(|env, _| Address::generate(env));
 }
+
+#[test]
+fn test_version() {
+    let (env, _client, _admin) = setup();
+    assert_eq!(ComplyRailContract::version(env.clone()), String::from_str(&env, crate::VERSION));
+}

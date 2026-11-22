@@ -24,6 +24,9 @@ pub enum ComplyError {
 /// Upper bound on admins, so the admin list cannot grow without limit (#67).
 const MAX_ADMINS: u32 = 16;
 
+/// Contract version. Increment on every breaking interface change.
+pub const VERSION: &str = "1.0.0";
+
 #[contract]
 pub struct ComplyRailContract;
 
@@ -318,6 +321,23 @@ impl ComplyRailContract {
 
     pub fn get_payment_count(env: Env) -> u64 {
         env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0)
+    }
+
+    /// Returns the contract version string (semver).
+    /// Returns a Soroban `String`, since contract functions cannot return `&str`.
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, VERSION)
+    }
+
+    /// Returns the sequential u64 counter embedded in a payment ID.
+    /// Payment IDs are 32-byte values with the counter stored in the first
+    /// 8 bytes as little-endian u64. This helper lets dashboards that index
+    /// payments by u64 derive the numeric ID from the on-chain BytesN<32>.
+    pub fn payment_id_to_u64(_env: Env, payment_id: BytesN<32>) -> u64 {
+        let arr = payment_id.to_array();
+        let mut counter_bytes = [0u8; 8];
+        counter_bytes.copy_from_slice(&arr[..8]);
+        u64::from_le_bytes(counter_bytes)
     }
 
     pub fn get_payments_by_vasp(
