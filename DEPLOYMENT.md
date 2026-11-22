@@ -140,8 +140,17 @@ soroban contract invoke \
 - [ ] Generate new keypair for testnet testing
 - [ ] Fund testnet account: https://friendbot.stellar.org
 - [ ] Test all contract functions on testnet first
-- [ ] Verify contract bytecode before mainnet deployment
-- [ ] Multi-sig setup for critical operations (recommended)
+- [ ] Verify contract bytecode before mainnet deployment:
+  ```bash
+  # Compute the SHA-256 hash of the local WASM binary
+  sha256sum target/wasm32-unknown-unknown/release/complyrail_contracts.wasm
+
+  # Fetch the on-chain WASM hash for the deployed contract
+  soroban contract info --id $CONTRACT_ID --network testnet | grep wasm_hash
+
+  # The two hashes must match before proceeding to mainnet.
+  # For reproducible builds, see the Docker build instructions above (Prerequisites).
+  ```
 - [ ] Audit contract code before mainnet
 - [ ] Use testnet for 7+ days to verify stability
 
@@ -159,6 +168,47 @@ soroban contract deploy \
   --source mainnet_admin \
   --network public
 ```
+
+## Rollback and Upgrade
+
+The ComplyRail contract is **not upgradeable**. There is no on-chain upgrade function; once deployed, the bytecode is fixed.
+
+### If a bug is found after deployment
+
+Because the contract cannot be patched in place, the recovery path is a full migration to a new contract:
+
+1. **Deploy a fixed contract** following the deployment steps above.
+2. **Pause new payments** in the old contract by removing registered VASPs or by stopping the off-chain systems that call it (there is no on-chain pause function).
+3. **Identify in-flight payments** that are still `Pending` in the old contract:
+   ```bash
+   # Inspect individual payment IDs to find any that remain pending
+   soroban contract invoke \
+     --id $OLD_CONTRACT_ID \
+     --source alice \
+     --network public \
+     -- get_payment_status \
+     --payment_id "<id>"
+   ```
+4. **Re-submit those payments** against the new contract so they can be completed there.
+5. **Re-register all VASPs** in the new contract:
+   ```bash
+   soroban contract invoke \
+     --id $NEW_CONTRACT_ID \
+     --source alice \
+     --network public \
+     -- register_vasp \
+     --vasp_address "<address>" \
+     --jurisdiction "<code>"
+   ```
+6. **Update all integrations** (SDKs, apps, off-chain services) to point to the new contract ID.
+7. **Communicate the migration** to all VASP operators and downstream consumers before switching over.
+
+The old contract remains on-chain and read-only; it cannot be deleted or paused automatically.
+
+### Deployment checklist addition
+
+- [ ] Record the deployed contract ID and the commit SHA it was built from
+- [ ] Keep the old contract ID available for read-only audit queries during migration
 
 ## Troubleshooting
 
