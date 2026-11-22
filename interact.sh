@@ -49,7 +49,7 @@ esac
 
 if [ -z "$CONTRACT_ID" ]; then
   echo "❌ Error: CONTRACT_ID not set"
-  echo "Run: export CONTRACT_ID=CXXXXXXX..."
+  echo "Run: export CONTRACT_ID=<your-contract-id>"
   exit 1
 fi
 
@@ -75,6 +75,49 @@ if [ "$DRY_RUN" = false ]; then
     exit 1
   fi
 fi
+
+# Validate a Stellar strkey by its format: G... for accounts, C... for contracts.
+# Usage: validate_strkey <value> <expected-kind: account|contract> <arg-name>
+# Note: this checks the format only, not the checksum.
+validate_strkey() {
+  local value="$1"
+  local kind="$2"
+  local name="$3"
+
+  if [ -z "$value" ]; then
+    echo "❌ Error: missing required argument: $name"
+    exit 1
+  fi
+
+  case "$kind" in
+    account)
+      if ! [[ "$value" =~ ^G[A-Z2-7]{55}$ ]]; then
+        echo "❌ Error: '$value' is not a valid account strkey ($name)"
+        exit 1
+      fi
+      ;;
+    contract)
+      if ! [[ "$value" =~ ^C[A-Z2-7]{55}$ ]]; then
+        echo "❌ Error: '$value' is not a valid contract strkey ($name)"
+        exit 1
+      fi
+      ;;
+    *)
+      echo "❌ Error: unknown strkey kind '$kind'"
+      exit 1
+      ;;
+  esac
+}
+
+# Require a non-empty argument. Usage: require_arg <value> <arg-name>
+require_arg() {
+  if [ -z "$1" ]; then
+    echo "❌ Error: missing required argument: $2"
+    exit 1
+  fi
+}
+
+validate_strkey "$CONTRACT_ID" contract CONTRACT_ID
 
 # Set network
 if [ "$NETWORK" = "testnet" ]; then
@@ -125,41 +168,86 @@ run_stellar() {
 case "$ACTION" in
   status)
     echo "Getting contract status..."
+    echo ""
+    echo "👤 Admins:"
     run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
-      -- get_contract_info
+      -- get_admins
+    echo ""
+    echo "🏦 Registered VASPs:"
+    run_stellar contract invoke \
+      --id "$CONTRACT_ID" \
+      --source "$SIGNER" \
+      --network "$NETWORK" \
+      -- list_vasps
     ;;
 
   register-vasp)
-    VASP_ADDRESS="${POSITIONAL[2]:-GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX}"
-    JURISDICTION="${POSITIONAL[3]:-US}"
+    CALLER="${POSITIONAL[2]}"
+    VASP="${POSITIONAL[3]}"
+    NAME="${POSITIONAL[4]}"
+    JURISDICTION="${POSITIONAL[5]}"
+    PUBLIC_KEY="${POSITIONAL[6]}"
+    EXPIRY_DAYS="${POSITIONAL[7]}"
+
+    require_arg "$CALLER" "caller"
+    require_arg "$VASP" "vasp"
+    require_arg "$NAME" "name"
+    require_arg "$JURISDICTION" "jurisdiction"
+    require_arg "$PUBLIC_KEY" "public_key"
+    require_arg "$EXPIRY_DAYS" "expiry_days"
+
+    validate_strkey "$CALLER" account caller
+    validate_strkey "$VASP" account vasp
+
     echo "Registering VASP..."
-    echo "Address: $VASP_ADDRESS"
+    echo "Caller: $CALLER"
+    echo "VASP: $VASP"
+    echo "Name: $NAME"
     echo "Jurisdiction: $JURISDICTION"
+    echo "Public key: $PUBLIC_KEY"
+    echo "Expiry days: $EXPIRY_DAYS"
 
     run_stellar contract invoke \
       --id "$CONTRACT_ID" \
       --source "$SIGNER" \
       --network "$NETWORK" \
       -- register_vasp \
-      --vasp_address "$VASP_ADDRESS" \
-      --jurisdiction "$JURISDICTION"
+      --caller "$CALLER" \
+      --vasp "$VASP" \
+      --name "$NAME" \
+      --jurisdiction "$JURISDICTION" \
+      --public_key "$PUBLIC_KEY" \
+      --expiry_days "$EXPIRY_DAYS"
 
     echo "✅ VASP registered"
     ;;
 
   submit-payment)
-    FROM_VASP="${POSITIONAL[2]:-GXXXXXXX1}"
-    TO_VASP="${POSITIONAL[3]:-GXXXXXXX2}"
-    AMOUNT="${POSITIONAL[4]:-1000}"
-    ASSET="${POSITIONAL[5]:-GXXXXXXX3}"
-    DATA_HASH="${POSITIONAL[6]:-0000000000000000000000000000000000000000000000000000000000000000}"
+    FROM_VASP="${POSITIONAL[2]}"
+    TO_VASP="${POSITIONAL[3]}"
+    BENEFICIARY="${POSITIONAL[4]}"
+    ASSET="${POSITIONAL[5]}"
+    AMOUNT="${POSITIONAL[6]}"
+
+    require_arg "$FROM_VASP" "from_vasp"
+    require_arg "$TO_VASP" "to_vasp"
+    require_arg "$BENEFICIARY" "beneficiary"
+    require_arg "$ASSET" "asset"
+    require_arg "$AMOUNT" "amount"
+
+    validate_strkey "$FROM_VASP" account from_vasp
+    validate_strkey "$TO_VASP" account to_vasp
+    validate_strkey "$BENEFICIARY" account beneficiary
+    validate_strkey "$ASSET" contract asset
 
     echo "Submitting payment..."
     echo "From: $FROM_VASP"
     echo "To: $TO_VASP"
+    echo "Beneficiary: $BENEFICIARY"
+    echo "Asset: $ASSET"
     echo "Amount: $AMOUNT"
 
     run_stellar contract invoke \
@@ -169,16 +257,21 @@ case "$ACTION" in
       -- submit_payment \
       --from_vasp "$FROM_VASP" \
       --to_vasp "$TO_VASP" \
-      --amount "$AMOUNT" \
+      --beneficiary "$BENEFICIARY" \
       --asset "$ASSET" \
-      --data_hash "$DATA_HASH"
+      --amount "$AMOUNT"
 
     echo "✅ Payment submitted"
     ;;
 
   get-threshold)
-    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
-    JURISDICTION="${POSITIONAL[3]:-US}"
+    ASSET="${POSITIONAL[2]}"
+    JURISDICTION="${POSITIONAL[3]}"
+
+    require_arg "$ASSET" "asset"
+    require_arg "$JURISDICTION" "jurisdiction"
+    validate_strkey "$ASSET" contract asset
+
     echo "Getting threshold..."
 
     run_stellar contract invoke \
@@ -191,9 +284,15 @@ case "$ACTION" in
     ;;
 
   set-threshold)
-    ASSET="${POSITIONAL[2]:-GXXXXXXX}"
-    JURISDICTION="${POSITIONAL[3]:-US}"
-    AMOUNT="${POSITIONAL[4]:-100000}"
+    ASSET="${POSITIONAL[2]}"
+    JURISDICTION="${POSITIONAL[3]}"
+    AMOUNT="${POSITIONAL[4]}"
+
+    require_arg "$ASSET" "asset"
+    require_arg "$JURISDICTION" "jurisdiction"
+    require_arg "$AMOUNT" "amount"
+    validate_strkey "$ASSET" contract asset
+
     echo "Setting threshold..."
 
     run_stellar contract invoke \
@@ -216,23 +315,24 @@ case "$ACTION" in
     echo "  SIGNER      - Stellar identity name used to sign (required)"
     echo ""
     echo "Flags:"
-    echo "  --mainnet               - Required for the public network"
-    echo "  --dry-run               - Print stellar commands instead of executing them"
-    echo "  --yes                   - Skip the confirmation prompt for public actions"
+    echo "  --mainnet   - Required for the public network"
+    echo "  --dry-run   - Print stellar commands instead of executing them"
+    echo "  --yes       - Skip the confirmation prompt for public actions"
     echo ""
     echo "Actions:"
-    echo "  status                  - Get contract info"
-    echo "  register-vasp [address] [jurisdiction] - Register VASP"
-    echo "  submit-payment [from] [to] [amount] [asset] [hash] - Submit payment"
-    echo "  get-threshold [asset] [jurisdiction] - Get threshold"
-    echo "  set-threshold [asset] [jurisdiction] [amount] - Set threshold"
+    echo "  status                  - Get contract info (admins and registered VASPs)"
+    echo "  register-vasp <caller> <vasp> <name> <jurisdiction> <public_key> <expiry_days> - Register VASP"
+    echo "  submit-payment <from_vasp> <to_vasp> <beneficiary> <asset> <amount> - Submit payment"
+    echo "  get-threshold <asset> <jurisdiction> - Get threshold"
+    echo "  set-threshold <asset> <jurisdiction> <amount> - Set threshold"
+    echo ""
+    echo "All address arguments are required and validated as Stellar strkeys."
     echo ""
     echo "Examples:"
     echo "  ./interact.sh testnet status"
-    echo "  ./interact.sh testnet register-vasp GXXXXXXX US"
-    echo "  ./interact.sh testnet submit-payment GXXXXXXX1 GXXXXXXX2 5000"
-    echo "  ./interact.sh --dry-run public set-threshold GXXXXXXX US 100000 --mainnet"
-    echo "  ./interact.sh public status --mainnet"
+    echo "  ./interact.sh testnet register-vasp <caller> <vasp> \"Acme Corp\" US <public_key> 365"
+    echo "  ./interact.sh testnet submit-payment <from_vasp> <to_vasp> <beneficiary> <asset> 5000"
+    echo "  ./interact.sh --dry-run public set-threshold <asset> US 100000 --mainnet"
     exit 1
     ;;
 esac
