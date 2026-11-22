@@ -22,6 +22,10 @@ const MAX_ADMINS: u32 = 16;
 
 /// Contract version. Increment on every breaking interface change.
 pub const VERSION: &str = "1.0.0";
+/// Extend a record once it has less than this many ledgers left (#59).
+const LEDGER_TTL_THRESHOLD: u32 = 100_000;
+/// Extend a record to this many ledgers from now (#59).
+const LEDGER_TTL_EXTEND: u32 = 500_000;
 
 #[contract]
 pub struct ComplyRailContract;
@@ -82,8 +86,13 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         assert!(threshold > 0, "threshold must be positive");
-        env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-        env.events().publish((symbol_short!("appr_th"),), (threshold, caller));
+
+        // Emit only on an actual change, and include the old value (#60).
+        let previous: i32 = env.storage().instance().get(&symbol_short!("min_appr")).unwrap_or(0);
+        if previous != threshold {
+            env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
+            env.events().publish((symbol_short!("appr_th"),), (previous, threshold));
+        }
     }
 
     pub fn register_vasp(
@@ -99,7 +108,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         // Re-registering an existing VASP would overwrite its status and expiry (#73).
-        assert!(!env.storage().instance().has(&vasp), "vasp already registered");
+        assert!(!env.storage().persistent().has(&vasp), "vasp already registered");
 
         let expiry = expiry_days.map(|days| {
             days.checked_mul(86400)
@@ -118,7 +127,9 @@ impl ComplyRailContract {
             updated_at: env.ledger().timestamp(),
         };
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         // Keep an enumerable index of registered VASPs (#41).
         let mut vasps: soroban_sdk::Vec<Address> = env.storage()
@@ -153,7 +164,7 @@ impl ComplyRailContract {
             "unauthorized: only admin or the vasp may renew"
         );
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
 
         // Unlimited registrations stay unlimited. Limited ones extend from
         // max(now, expires_at) so renewing an expired VASP makes it valid again.
@@ -168,7 +179,9 @@ impl ComplyRailContract {
         }
         entry.updated_at = env.ledger().timestamp();
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         // `symbol_short!` allows at most 9 characters, so build this 10-character topic with `Symbol::new`.
         env.events().publish((soroban_sdk::Symbol::new(&env, "vasp_renew"),), (vasp.clone(), caller));
     }
@@ -181,11 +194,13 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.expires_at = Some(env.ledger().timestamp() + expires_in_seconds);
         entry.updated_at = env.ledger().timestamp();
 
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("vasp_exp"),), &vasp);
     }
 
@@ -193,10 +208,12 @@ impl ComplyRailContract {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        let mut entry: VaspEntry = env.storage().instance().get(&vasp).expect("vasp not found");
+        let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
         entry.status = status;
         entry.updated_at = env.ledger().timestamp();
-        env.storage().instance().set(&vasp, &entry);
+        env.storage().persistent().set(&vasp, &entry);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         // Pending payments touching a suspended or revoked VASP are held (#44).
         if entry.status != VaspStatus::Active {
@@ -206,14 +223,16 @@ impl ComplyRailContract {
                 .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
             for payment_id in payment_ids.iter() {
                 let mut payment: PaymentRecord = env.storage()
-                    .instance()
+                    .persistent()
                     .get(&payment_id)
                     .expect("payment not found");
                 if payment.status == PaymentStatus::Pending
                     && (payment.from_vasp == vasp || payment.to_vasp == vasp)
                 {
                     payment.status = PaymentStatus::Held;
-                    env.storage().instance().set(&payment_id, &payment);
+                    env.storage().persistent().set(&payment_id, &payment);
+                    // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+                    env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
                 }
             }
         }
@@ -224,7 +243,7 @@ impl ComplyRailContract {
 
     /// Returns `VaspNotFound` instead of `None` for an unknown VASP (#46).
     pub fn get_vasp(env: Env, vasp: Address) -> Result<VaspEntry, ComplyError> {
-        env.storage().instance().get(&vasp).ok_or(ComplyError::VaspNotFound)
+        env.storage().persistent().get(&vasp).ok_or(ComplyError::VaspNotFound)
     }
 
     pub fn set_threshold(env: Env, caller: Address, asset: Address, jurisdiction: String, amount: i128) {
@@ -271,8 +290,8 @@ impl ComplyRailContract {
         from_vasp.require_auth();
         assert!(!Self::is_registry_frozen(env.clone()), "registry is frozen");
 
-        let from_entry: VaspEntry = env.storage().instance().get(&from_vasp).expect("from_vasp not registered");
-        let to_entry: VaspEntry = env.storage().instance().get(&to_vasp).expect("to_vasp not registered");
+        let from_entry: VaspEntry = env.storage().persistent().get(&from_vasp).expect("from_vasp not registered");
+        let to_entry: VaspEntry = env.storage().persistent().get(&to_vasp).expect("to_vasp not registered");
 
         assert!(from_entry.status == VaspStatus::Active, "from_vasp not active");
         assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
@@ -311,7 +330,9 @@ impl ComplyRailContract {
             resolution_reason: None,
         };
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         let mut payment_ids: soroban_sdk::Vec<BytesN<32>> = env.storage()
             .instance()
@@ -330,13 +351,13 @@ impl ComplyRailContract {
     }
 
     pub fn get_payment(env: Env, payment_id: BytesN<32>) -> Option<PaymentRecord> {
-        env.storage().instance().get(&payment_id)
+        env.storage().persistent().get(&payment_id)
     }
 
     /// Outcome of a payment and when it was resolved, without the full record (#45).
     pub fn get_payment_status(env: Env, payment_id: BytesN<32>) -> Option<(PaymentStatus, Option<u64>)> {
         env.storage()
-            .instance()
+            .persistent()
             .get::<_, PaymentRecord>(&payment_id)
             .map(|payment| (payment.status, payment.resolved_at))
     }
@@ -374,7 +395,7 @@ impl ComplyRailContract {
         let mut results = soroban_sdk::Vec::new(&env);
 
         for payment_id in payment_ids.iter() {
-            if let Some(payment) = env.storage().instance().get::<_, PaymentRecord>(&payment_id) {
+            if let Some(payment) = env.storage().persistent().get::<_, PaymentRecord>(&payment_id) {
                 if as_sender && payment.from_vasp == vasp_address {
                     results.push_back(payment_id);
                 } else if !as_sender && payment.to_vasp == vasp_address {
@@ -396,7 +417,7 @@ impl ComplyRailContract {
         caller_vasp.require_auth();
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -408,12 +429,12 @@ impl ComplyRailContract {
         );
 
         let to_vasp_entry: VaspEntry = env.storage()
-            .instance()
+            .persistent()
             .get(&payment.to_vasp)
             .expect("to_vasp not found");
 
         let from_vasp_entry: VaspEntry = env.storage()
-            .instance()
+            .persistent()
             .get(&payment.from_vasp)
             .expect("from_vasp not found");
 
@@ -446,7 +467,9 @@ impl ComplyRailContract {
         payment.ivms_version = Some(ivms_version);
         payment.resolved_at = Some(env.ledger().timestamp());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("att_sub"),), (payment_id.clone(), caller_vasp));
     }
 
@@ -455,7 +478,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -463,7 +486,7 @@ impl ComplyRailContract {
 
         // The beneficiary must still be eligible at release time (#43).
         let to_entry: VaspEntry = env.storage()
-            .instance()
+            .persistent()
             .get(&payment.to_vasp)
             .expect("to_vasp not registered");
         assert!(to_entry.status == VaspStatus::Active, "to_vasp not active");
@@ -475,7 +498,9 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
         payment.resolution_reason = Some(reason.clone());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish(
             (symbol_short!("pay_rel"),),
             (payment_id.clone(), caller.clone(), payment.amount, reason),
@@ -487,7 +512,7 @@ impl ComplyRailContract {
         Self::require_admin(&env, &caller);
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -498,7 +523,9 @@ impl ComplyRailContract {
         payment.resolved_at = Some(env.ledger().timestamp());
         payment.resolution_reason = Some(reason.clone());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish(
             (symbol_short!("pay_rej"),),
             (payment_id.clone(), caller.clone(), payment.amount, reason),
@@ -510,7 +537,7 @@ impl ComplyRailContract {
         from_vasp.require_auth();
 
         let mut payment: PaymentRecord = env.storage()
-            .instance()
+            .persistent()
             .get(&payment_id)
             .expect("payment not found");
 
@@ -524,7 +551,9 @@ impl ComplyRailContract {
         payment.status = PaymentStatus::Rejected;
         payment.resolved_at = Some(env.ledger().timestamp());
 
-        env.storage().instance().set(&payment_id, &payment);
+        env.storage().persistent().set(&payment_id, &payment);
+        // Persistent entries expire unless extended, so every write keeps the record alive (#59).
+        env.storage().persistent().extend_ttl(&payment_id, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
         env.events().publish((symbol_short!("pay_rec"),), &payment_id);
     }
 
