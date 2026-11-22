@@ -385,7 +385,7 @@ impl ComplyRailContract {
     }
 
     pub fn get_payment_count(env: Env) -> u64 {
-        env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0)
+        env.storage().persistent().get(&symbol_short!("counter")).unwrap_or(0)
     }
 
     /// Returns the contract version string (semver).
@@ -629,9 +629,11 @@ impl ComplyRailContract {
     }
 
     fn generate_payment_id(env: &Env) -> BytesN<32> {
-        let counter: u64 = env.storage().instance().get(&symbol_short!("counter")).unwrap_or(0);
-        env.storage().instance().set(&symbol_short!("counter"), &(counter + 1));
-        env.storage().instance().extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
+        // The counter has its own persistent entry, so a payment does not rewrite the
+        // instance entry that holds the admin list (#69).
+        let counter: u64 = env.storage().persistent().get(&symbol_short!("counter")).unwrap_or(0);
+        env.storage().persistent().set(&symbol_short!("counter"), &(counter + 1));
+        env.storage().persistent().extend_ttl(&symbol_short!("counter"), LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
 
         // Hash the counter with ledger state so IDs are not sequential (#37).
         // Callers find payments through the index, not by guessing IDs.
