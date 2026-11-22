@@ -454,3 +454,32 @@ fn test_admin_cannot_be_payment_party() {
     assert!(result.is_err());
 }
 
+#[test]
+fn test_zero_and_negative_amounts_rejected() {
+    let (env, client, admin) = setup();
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let asset = Address::generate(&env);
+    register(&env, &client, &admin, &from, None);
+    register(&env, &client, &admin, &to, None);
+
+    assert!(client.try_submit_payment(&from, &to, &beneficiary, &asset, &0).is_err());
+    assert!(client.try_submit_payment(&from, &to, &beneficiary, &asset, &-1).is_err());
+}
+
+#[test]
+fn test_amount_one_is_accepted() {
+    let (env, client, admin) = setup();
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let asset = Address::generate(&env);
+    register(&env, &client, &admin, &from, None);
+    register(&env, &client, &admin, &to, None);
+
+    // No threshold is configured, so the payment is released straight away.
+    let payment_id = client.submit_payment(&from, &to, &beneficiary, &asset, &1);
+    assert_eq!(client.get_payment(&payment_id).unwrap().amount, 1);
+}
+

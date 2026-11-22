@@ -296,6 +296,7 @@ impl ComplyRailContract {
 
         // A VASP cannot pay itself (#31).
         assert!(from_vasp != to_vasp, "from_vasp and to_vasp must differ");
+        assert!(amount > 0, "amount must be positive");
         assert!(
             !Self::is_admin(&env, &from_vasp) && !Self::is_admin(&env, &to_vasp),
             "an admin cannot be a payment party"
