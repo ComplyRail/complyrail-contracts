@@ -3,6 +3,9 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fuzz_tests;
+
 use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, symbol_short};
 use types::*;
 
