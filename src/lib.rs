@@ -3,7 +3,7 @@ mod types;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, Map, symbol_short};
+use soroban_sdk::{contract, contracterror, contractimpl, Address, Env, String, BytesN, symbol_short};
 use types::*;
 
 /// How long a payment may stay pending before it can no longer be attested (#33).
@@ -39,9 +39,10 @@ impl ComplyRailContract {
         admin.require_auth();
         let mut admins: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
         env.storage().instance().set(&(symbol_short!("admin"), admin.clone()), &true);
-        admins.push_back(admin);
+        admins.push_back(admin.clone());
         env.storage().instance().set(&symbol_short!("admins"), &admins);
         env.storage().instance().set(&symbol_short!("min_appr"), &1i32);
+        env.events().publish((symbol_short!("init"),), (admin, 1i32));
     }
 
     pub fn add_admin(env: Env, caller: Address, new_admin: Address) {
@@ -109,6 +110,9 @@ impl ComplyRailContract {
     ) {
         caller.require_auth();
         Self::require_admin(&env, &caller);
+
+        // An all-zero key cannot be a real public key (#12).
+        assert!(public_key.to_array() != [0u8; 32], "public key must not be all zeros");
 
         // Re-registering an existing VASP would overwrite its status and expiry (#73).
         assert!(!env.storage().persistent().has(&vasp), "vasp already registered");

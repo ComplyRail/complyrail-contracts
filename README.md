@@ -117,6 +117,10 @@ docker build -t complyrail-build:latest .
 
 CI also verifies that this image builds successfully.
 
+## VASP Public Key Format
+
+Each VASP is registered with a `BytesN<32>` public key used to receive encrypted IVMS101 payloads. The key must be a valid 32-byte value and **must not be all zeros** — `register_vasp` rejects an all-zero key, since a VASP registered with a zero key cannot receive encrypted IVMS payloads.
+
 ## License
 
 Apache License 2.0 — see LICENSE file.

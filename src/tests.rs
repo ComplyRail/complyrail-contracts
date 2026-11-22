@@ -35,7 +35,7 @@ fn register(
         vasp,
         &String::from_str(env, "Test VASP"),
         &String::from_str(env, "US"),
-        &BytesN::from_array(env, &[0u8; 32]),
+        &BytesN::from_array(env, &[1u8; 32]),
         &expiry_days,
     );
 }
@@ -481,5 +481,20 @@ fn test_amount_one_is_accepted() {
     // No threshold is configured, so the payment is released straight away.
     let payment_id = client.submit_payment(&from, &to, &beneficiary, &asset, &1);
     assert_eq!(client.get_payment(&payment_id).unwrap().amount, 1);
+}
+
+#[test]
+fn test_all_zero_public_key_rejected() {
+    let (env, client, admin) = setup();
+    let vasp = Address::generate(&env);
+    let result = client.try_register_vasp(
+        &admin,
+        &vasp,
+        &String::from_str(&env, "Zero key VASP"),
+        &String::from_str(&env, "US"),
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &None,
+    );
+    assert!(result.is_err());
 }
 

@@ -42,14 +42,6 @@ pub struct VaspEntry {
     pub updated_at: u64,
 }
 
-#[derive(Clone, Debug)]
-#[contracttype]
-pub struct ThresholdConfig {
-    pub asset: Address,
-    pub jurisdiction: String,
-    pub threshold_amount: i128,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[contracttype]
 pub enum PaymentStatus {
@@ -57,23 +49,6 @@ pub enum PaymentStatus {
     Released,
     Held,
     Rejected,
-}
-
-#[derive(Clone, Debug)]
-#[contracttype]
-pub struct AdminApproval {
-    pub admin: Address,
-    pub approved_at: u64,
-}
-
-#[derive(Clone, Debug)]
-#[contracttype]
-pub struct PendingApproval {
-    pub operation_id: soroban_sdk::BytesN<32>,
-    pub operation_type: String,
-    pub operation_data: String,
-    pub approvals: soroban_sdk::Vec<AdminApproval>,
-    pub created_at: u64,
 }
 
 #[derive(Clone, Debug)]
