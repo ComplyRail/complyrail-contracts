@@ -58,6 +58,19 @@ To intentionally bump the SDK, include the marker `[sdk-bump]` in the commit
 message (or PR title) that updates the lock file. Any SDK lock entry change
 without that marker fails the build.
 
+## Toolchain
+
+Builds are pinned so the same commit always produces the same WASM:
+
+| Component | Version |
+|-----------|---------|
+| Rust | 1.85.0 |
+| Stellar CLI | 22.8.1 |
+| soroban-sdk | 22.0.8 |
+| WASM target | `wasm32v1-none` |
+
+Build output: `target/wasm32v1-none/release/complyrail_contracts.wasm`
+
 ## License
 
 Apache License 2.0 — see LICENSE file.

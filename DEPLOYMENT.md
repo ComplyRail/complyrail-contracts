@@ -17,10 +17,12 @@ docker run --rm -v $(pwd):/workspace complyrail-build:latest
 # Install Rust and Soroban CLI
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
-rustup target add wasm32-unknown-unknown
+rustup toolchain install 1.85.0
+rustup default 1.85.0
+rustup target add wasm32v1-none
 
-# Install Soroban CLI
-cargo install --locked soroban-cli
+# Install Stellar CLI
+cargo install --locked stellar-cli --version 22.8.1
 ```
 
 ### Set Up Wallet
@@ -44,10 +46,10 @@ soroban keys add alice --secret-key SXXX...
 docker run --rm -v $(pwd):/workspace complyrail-build:latest
 
 # Or with Rust installed locally
-cargo build --release --target wasm32-unknown-unknown
+cargo build --release --target wasm32v1-none
 ```
 
-Output: `target/wasm32-unknown-unknown/release/complyrail_contracts.wasm`
+Output: `target/wasm32v1-none/release/complyrail_contracts.wasm`
 
 ### 2. Deploy to Testnet
 
@@ -58,7 +60,7 @@ export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
 
 # Deploy (keep the contract ID!)
 CONTRACT_ID=$(soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/complyrail_contracts.wasm \
+  --wasm target/wasm32v1-none/release/complyrail_contracts.wasm \
   --source alice \
   --network testnet)
 
@@ -155,7 +157,7 @@ export SOROBAN_NETWORK_PASSPHRASE="Public Global Stellar Network ; September 201
 
 # Deploy with formal audit approval
 soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/complyrail_contracts.wasm \
+  --wasm target/wasm32v1-none/release/complyrail_contracts.wasm \
   --source mainnet_admin \
   --network public
 ```

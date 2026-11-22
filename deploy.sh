@@ -35,13 +35,13 @@ echo "📦 Building contract..."
 if command -v docker &> /dev/null; then
   docker run --rm -v $(pwd):/workspace complyrail-build:latest
 elif command -v cargo &> /dev/null; then
-  cargo build --release --target wasm32-unknown-unknown
+  cargo build --release --target wasm32v1-none
 else
   echo "❌ Error: Neither Docker nor Cargo found. Please install one."
   exit 1
 fi
 
-WASM_FILE="target/wasm32-unknown-unknown/release/complyrail_contracts.wasm"
+WASM_FILE="target/wasm32v1-none/release/complyrail_contracts.wasm"
 
 if [ ! -f "$WASM_FILE" ]; then
   echo "❌ Error: WASM file not found at $WASM_FILE"

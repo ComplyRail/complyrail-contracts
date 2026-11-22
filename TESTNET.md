@@ -63,7 +63,7 @@ For Phase 1 testing, we need two mock VASP accounts funded on Stellar testnet:
 
 ```bash
 stellar contract deploy \
-  --wasm ./target/wasm32-unknown-unknown/release/complyrail_contracts.wasm \
+  --wasm ./target/wasm32v1-none/release/complyrail_contracts.wasm \
   --source-account vasp_a \
   --network testnet
 ```
