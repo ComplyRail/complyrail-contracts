@@ -389,3 +389,17 @@ fn test_version() {
     let (env, _client, _admin) = setup();
     assert_eq!(ComplyRailContract::version(env.clone()), String::from_str(&env, crate::VERSION));
 }
+
+#[test]
+fn test_self_payment_rejected() {
+    let (env, client, admin) = setup();
+    let vasp = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    register(&env, &client, &admin, &vasp, None);
+    client.set_threshold(&admin, &asset, &String::from_str(&env, "US"), &THRESHOLD);
+
+    let result = client.try_submit_payment(&vasp, &vasp, &beneficiary, &asset, &(THRESHOLD / 2));
+    assert!(result.is_err());
+}

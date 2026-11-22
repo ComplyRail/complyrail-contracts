@@ -288,6 +288,9 @@ impl ComplyRailContract {
         amount: i128,
     ) -> BytesN<32> {
         from_vasp.require_auth();
+
+        // A VASP cannot pay itself (#31).
+        assert!(from_vasp != to_vasp, "from_vasp and to_vasp must differ");
         assert!(!Self::is_registry_frozen(env.clone()), "registry is frozen");
 
         let from_entry: VaspEntry = env.storage().persistent().get(&from_vasp).expect("from_vasp not registered");
