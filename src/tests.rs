@@ -1,7 +1,7 @@
 use crate::types::{PaymentStatus, VaspStatus};
 use crate::{ComplyRailContract, ComplyRailContractClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Events as _, Ledger as _},
     Address, BytesN, Env, String,
 };
 
@@ -335,6 +335,40 @@ fn test_renew_unlimited_stays_unlimited() {
     client.renew_vasp_registration(&admin, &vasp, &30);
 
     assert_eq!(client.get_vasp(&vasp).expires_at, None);
+}
+
+#[test]
+fn test_renew_event_contains_old_and_new_expiry() {
+    let (env, client, admin) = setup();
+    let vasp = Address::generate(&env);
+
+    // Register with a 30-day expiry so the event carries a concrete old value.
+    register(&env, &client, &admin, &vasp, Some(30));
+    let old_expires_at: Option<u64> = client.get_vasp(&vasp).expires_at;
+
+    client.renew_vasp_registration(&admin, &vasp, &10);
+    let new_expires_at: Option<u64> = client.get_vasp(&vasp).expires_at;
+
+    // env.events().all() returns (contract_id, topics: Vec<Val>, data: Val).
+    let all_events = env.events().all();
+    let (_, topics, data) = all_events.last().unwrap();
+
+    // Confirm the event topic is "vasp_renew".
+    let expected_topic = soroban_sdk::Symbol::new(&env, "vasp_renew");
+    let got_topic = soroban_sdk::Symbol::try_from_val(&env, topics.first().unwrap())
+        .expect("topic must be a Symbol");
+    assert_eq!(got_topic, expected_topic);
+
+    // Decode the data tuple: (Address, Address, Option<u64>, Option<u64>).
+    let (evt_vasp, _evt_caller, evt_old, evt_new): (Address, Address, Option<u64>, Option<u64>) =
+        soroban_sdk::TryFromVal::try_from_val(&env, data).expect("event data must decode");
+
+    assert_eq!(evt_vasp, vasp);
+    assert_eq!(evt_old, old_expires_at);
+    assert_eq!(evt_new, new_expires_at);
+    // Cross-check the computed timestamps.
+    assert_eq!(evt_old, Some(START + 30 * DAY));
+    assert_eq!(evt_new, Some(START + 40 * DAY));
 }
 
 // ---------------------------------------------------------------------------

@@ -181,6 +181,9 @@ impl ComplyRailContract {
 
         let mut entry: VaspEntry = env.storage().persistent().get(&vasp).expect("vasp not found");
 
+        // Capture the expiry before mutation so we can include it in the event (#16).
+        let old_expires_at = entry.expires_at;
+
         // Unlimited registrations stay unlimited. Limited ones extend from
         // max(now, expires_at) so renewing an expired VASP makes it valid again.
         if let Some(current_expiry) = entry.expires_at {
@@ -197,8 +200,12 @@ impl ComplyRailContract {
         env.storage().persistent().set(&vasp, &entry);
         // Persistent entries expire unless extended, so every write keeps the record alive (#59).
         env.storage().persistent().extend_ttl(&vasp, LEDGER_TTL_THRESHOLD, LEDGER_TTL_EXTEND);
+        // Payload includes old and new expires_at so indexers need no extra read (#16).
         // `symbol_short!` allows at most 9 characters, so build this 10-character topic with `Symbol::new`.
-        env.events().publish((soroban_sdk::Symbol::new(&env, "vasp_renew"),), (vasp.clone(), caller));
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "vasp_renew"),),
+            (vasp.clone(), caller, old_expires_at, entry.expires_at),
+        );
     }
 
     /// Set a registration to expire `expires_in_seconds` from now (#47).
