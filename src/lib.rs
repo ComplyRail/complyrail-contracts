@@ -22,6 +22,9 @@ const PAYMENT_WINDOW_SECS: u64 = 7 * 86400;
 #[repr(u32)]
 pub enum ComplyError {
     VaspNotFound = 1,
+    ProposalNotFound = 2,
+    AlreadyApproved = 3,
+    ProposalAlreadyExecuted = 4,
 }
 
 /// Upper bound on admins, so the admin list cannot grow without limit (#67).
@@ -73,12 +76,28 @@ impl ComplyRailContract {
     }
 
     /// Emergency switch: while frozen, no new payments can be submitted (#49).
-    pub fn set_registry_frozen(env: Env, caller: Address, frozen: bool) {
+    ///
+    /// When `min_appr == 1` the freeze takes effect immediately. When
+    /// `min_appr > 1` a proposal is created that requires that many admin
+    /// approvals before it executes. Returns the proposal ID (a u32 counter)
+    /// so the caller can share it with co-signers. When the threshold is 1
+    /// the returned ID is `0` (unused).
+    pub fn set_registry_frozen(env: Env, caller: Address, frozen: bool) -> u32 {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
-        env.storage().instance().set(&symbol_short!("frozen"), &frozen);
-        env.events().publish((symbol_short!("frozen"),), &frozen);
+        let min_appr = Self::get_min_approvals(&env);
+        if min_appr <= 1 {
+            Self::execute_set_frozen(&env, frozen);
+            return 0;
+        }
+
+        let kind = if frozen {
+            ProposalKind::FreezeRegistry
+        } else {
+            ProposalKind::UnfreezeRegistry
+        };
+        Self::create_proposal(&env, caller, kind)
     }
 
     pub fn is_registry_frozen(env: Env) -> bool {
@@ -92,18 +111,106 @@ impl ComplyRailContract {
             .unwrap_or_else(|| soroban_sdk::Vec::new(&env))
     }
 
-    pub fn set_approval_threshold(env: Env, caller: Address, threshold: i32) {
+    /// Change the minimum number of admin approvals required for sensitive
+    /// governance operations (freeze/unfreeze, and threshold changes).
+    ///
+    /// When `min_appr == 1` the change takes effect immediately. When
+    /// `min_appr > 1` a proposal is created first. Returns the proposal ID.
+    pub fn set_approval_threshold(env: Env, caller: Address, threshold: i32) -> u32 {
         caller.require_auth();
         Self::require_admin(&env, &caller);
 
         assert!(threshold > 0, "threshold must be positive");
 
-        // Emit only on an actual change, and include the old value (#60).
-        let previous: i32 = env.storage().instance().get(&symbol_short!("min_appr")).unwrap_or(0);
-        if previous != threshold {
-            env.storage().instance().set(&symbol_short!("min_appr"), &threshold);
-            env.events().publish((symbol_short!("appr_th"),), (previous, threshold));
+        let min_appr = Self::get_min_approvals(&env);
+        if min_appr <= 1 {
+            Self::execute_set_threshold(&env, threshold);
+            return 0;
         }
+
+        Self::create_proposal(&env, caller, ProposalKind::SetApprovalThreshold(threshold))
+    }
+
+    /// Returns the minimum number of admin approvals required for sensitive operations.
+    pub fn get_approval_threshold(env: Env) -> i32 {
+        Self::get_min_approvals(&env)
+    }
+
+    // -----------------------------------------------------------------------
+    // Proposal flow
+    // -----------------------------------------------------------------------
+
+    /// Open a governance proposal. Any admin can call this; the caller
+    /// automatically counts as the first approval.
+    ///
+    /// Returns the numeric proposal ID.
+    pub fn propose_action(env: Env, caller: Address, kind: ProposalKind) -> u32 {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        Self::create_proposal(&env, caller, kind)
+    }
+
+    /// Record an admin's approval for `proposal_id`.
+    ///
+    /// If this approval meets the `min_appr` threshold the proposal executes
+    /// immediately and `executed` is set to `true`. Calling this again on an
+    /// already-executed proposal returns `ProposalAlreadyExecuted`.
+    pub fn approve_action(
+        env: Env,
+        caller: Address,
+        proposal_id: u32,
+    ) -> Result<bool, ComplyError> {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
+
+        let key = (symbol_short!("prop"), proposal_id);
+        let mut proposal: Proposal = env
+            .storage()
+            .instance()
+            .get(&key)
+            .ok_or(ComplyError::ProposalNotFound)?;
+
+        if proposal.executed {
+            return Err(ComplyError::ProposalAlreadyExecuted);
+        }
+
+        // Guard against double-voting.
+        for existing in proposal.approvals.iter() {
+            if existing == caller {
+                return Err(ComplyError::AlreadyApproved);
+            }
+        }
+
+        proposal.approvals.push_back(caller.clone());
+
+        let min_appr = Self::get_min_approvals(&env);
+        let ready = proposal.approvals.len() as i32 >= min_appr;
+
+        if ready {
+            proposal.executed = true;
+            env.storage().instance().set(&key, &proposal);
+            Self::execute_proposal(&env, &proposal.kind);
+            env.events().publish(
+                (symbol_short!("prop_exe"),),
+                (proposal_id, caller),
+            );
+            Ok(true)
+        } else {
+            env.storage().instance().set(&key, &proposal);
+            env.events().publish(
+                (symbol_short!("prop_apr"),),
+                (proposal_id, caller, proposal.approvals.len()),
+            );
+            Ok(false)
+        }
+    }
+
+    /// Retrieve a proposal by ID, or `None` if it does not exist.
+    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<Proposal> {
+        env.storage()
+            .instance()
+            .get(&(symbol_short!("prop"), proposal_id))
     }
 
     pub fn register_vasp(
@@ -664,5 +771,78 @@ impl ComplyRailContract {
 
     fn require_admin(env: &Env, caller: &Address) {
         assert!(Self::is_admin(env, caller), "unauthorized: not an admin");
+    }
+
+    /// Read `min_appr` from storage, defaulting to 1.
+    fn get_min_approvals(env: &Env) -> i32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("min_appr"))
+            .unwrap_or(1i32)
+    }
+
+    /// Allocate a new proposal, record the proposer as the first approver, and
+    /// return the proposal ID.
+    fn create_proposal(env: &Env, proposer: Address, kind: ProposalKind) -> u32 {
+        let id: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("prop_ctr"))
+            .unwrap_or(0u32);
+        let next_id = id + 1;
+        env.storage()
+            .instance()
+            .set(&symbol_short!("prop_ctr"), &next_id);
+
+        let mut approvals = soroban_sdk::Vec::new(env);
+        approvals.push_back(proposer.clone());
+
+        let proposal = Proposal {
+            kind: kind.clone(),
+            approvals,
+            executed: false,
+        };
+
+        env.storage()
+            .instance()
+            .set(&(symbol_short!("prop"), id), &proposal);
+
+        env.events().publish(
+            (symbol_short!("prop_new"),),
+            (id, proposer),
+        );
+
+        id
+    }
+
+    /// Execute the action described by `kind`. Called when approvals reach threshold.
+    fn execute_proposal(env: &Env, kind: &ProposalKind) {
+        match kind {
+            ProposalKind::FreezeRegistry => Self::execute_set_frozen(env, true),
+            ProposalKind::UnfreezeRegistry => Self::execute_set_frozen(env, false),
+            ProposalKind::SetApprovalThreshold(threshold) => {
+                Self::execute_set_threshold(env, *threshold)
+            }
+        }
+    }
+
+    fn execute_set_frozen(env: &Env, frozen: bool) {
+        env.storage().instance().set(&symbol_short!("frozen"), &frozen);
+        env.events().publish((symbol_short!("frozen"),), &frozen);
+    }
+
+    fn execute_set_threshold(env: &Env, threshold: i32) {
+        let previous: i32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("min_appr"))
+            .unwrap_or(1i32);
+        if previous != threshold {
+            env.storage()
+                .instance()
+                .set(&symbol_short!("min_appr"), &threshold);
+            env.events()
+                .publish((symbol_short!("appr_th"),), (previous, threshold));
+        }
     }
 }

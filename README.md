@@ -18,13 +18,13 @@ Threshold jurisdiction: the threshold is looked up by the **beneficiary (receivi
 - **Compliance Thresholds** — Configurable per-asset, per-jurisdiction amount thresholds.
 - **Threshold-gated Payments** — Payments at or above threshold enter `Pending` state; payments below are immediately `Released`.
 - **Attestation Recording** — The beneficiary VASP submits an IVMS101 message hash to transition a payment from `Pending` to `Released`.
-- **Admin Controls** — An admin list (not a multi-sig quorum) allows manual release or rejection of payments and threshold management.
+- **Admin Controls** — An admin list with a configurable multi-admin approval threshold. When `min_appr > 1`, sensitive governance operations (freeze/unfreeze registry, change approval threshold) require that many admin approvals before they execute. Routine per-payment operations (release, reject, register VASP) remain single-admin.
 - **Event Emission** — Each state-changing call emits a Soroban event (see [EVENT\_SCHEMA.md](EVENT_SCHEMA.md)).
 
 ## Current Limitations
 
 - **No fund escrow** — The contract records payment intent and compliance state; it does not hold or move tokens. Actual fund movement must be implemented by the caller.
-- **Admin list, not multi-sig** — `add_admin` maintains a list of authorised addresses, but sensitive operations require only a single admin signature. The `min_appr` threshold value is stored but not enforced on individual operations.
+- **Admin list, not full multi-sig** — `add_admin` maintains a list of authorised addresses. Sensitive governance operations (registry freeze/unfreeze and approval-threshold changes) go through a proposal-and-approval flow governed by `min_appr`. Routine per-payment operations (release, reject, register VASP, set threshold) still require only a single admin.
 - **Partial event coverage** — Not every field change emits a dedicated event. The `update_vasp_status` and `set_threshold` calls emit topic-only events without field-level payloads.
 - **Linear payment scan** — `get_payments_by_vasp` iterates over all payment IDs; it will be slow on large ledgers.
 
@@ -128,6 +128,31 @@ Each VASP is registered with a `BytesN<32>` public key used to receive encrypted
 When `submit_payment` decides whether a payment must be held in escrow, it looks up the threshold using the **originating VASP's jurisdiction** (the `from` VASP), not the receiving VASP's.
 
 Rationale: the Travel Rule obligation is imposed on the originating VASP, which is the party that must collect and transmit originator information before the transfer is released. Gating on the originator's jurisdiction keeps the escrow decision aligned with the obligation that triggers it, and matches the sibling `complyrail-app` contract so the same payment cannot be held in one system and released in the other.
+
+## Multi-Admin Approval
+
+When `min_appr` is set to more than 1 (via `set_approval_threshold`), two governance operations require that many distinct admin signatures before they execute:
+
+- **Freeze / unfreeze the registry** (`set_registry_frozen`)
+- **Change the approval threshold itself** (`set_approval_threshold`)
+
+Routine per-payment operations — `release_payment`, `reject_payment`, `register_vasp`, `update_vasp_status`, `set_threshold` — still require only a single admin.
+
+### Proposal flow
+
+1. **Any admin** calls `set_registry_frozen` or `set_approval_threshold` as normal. When `min_appr > 1` the function creates a proposal instead of executing immediately, and returns a numeric proposal ID.
+2. **Co-signing admins** call `approve_action(caller, proposal_id)`. Each call records one approval. The function returns `false` while the count is below `min_appr`, and `true` when the threshold is reached and the action executes.
+3. Once executed the proposal is marked `executed = true`; further calls to `approve_action` on it return `ProposalAlreadyExecuted`.
+
+You can also open a proposal explicitly with `propose_action(caller, ProposalKind)` and retrieve its current state with `get_proposal(proposal_id)`.
+
+### Errors
+
+| Code | Meaning |
+|------|---------|
+| `ProposalNotFound` (2) | No proposal exists with the given ID |
+| `AlreadyApproved` (3) | Caller already voted on this proposal |
+| `ProposalAlreadyExecuted` (4) | Proposal has already been executed |
 
 ## License
 
