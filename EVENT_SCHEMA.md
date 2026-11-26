@@ -129,15 +129,18 @@ Emitted when a VASP registration is renewed.
 | Field | Type | Description |
 |-------|------|-------------|
 | topic | `(Symbol("vasp_renew"),)` | |
-| data | `Address` | The VASP address whose registration was extended |
+| data[0] | `Address` | The VASP address whose registration was extended |
+| data[1] | `Address` | The caller who triggered the renewal |
+| data[2] | `Option<u64>` | The expiry timestamp (Unix seconds) **before** the renewal, or `None` for unlimited registrations |
+| data[3] | `Option<u64>` | The expiry timestamp (Unix seconds) **after** the renewal, or `None` for unlimited registrations |
 
 **Example:**
 ```
 topic: ["vasp_renew"]
-data:  GCYYY...
+data:  (GCYYY..., GADMIN..., Some(1_750_000_000), Some(1_750_864_000))
 ```
 
-**Trigger:** `renew_vasp_registration(caller, vasp, extension_days)` — requires `caller` to authenticate. The VASP entry must already exist.
+**Trigger:** `renew_vasp_registration(caller, vasp, extension_days)` — requires `caller` to authenticate. The VASP entry must already exist. The old and new expiry values let an indexer update its state without an extra `get_vasp` call (#16).
 
 ---
 
