@@ -1,4 +1,4 @@
-use crate::types::{PaymentStatus, VaspStatus};
+use crate::types::{PaymentStatus, VaspStatus, ProposalKind};
 use crate::{ComplyRailContract, ComplyRailContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
@@ -517,5 +517,215 @@ fn test_rejected_and_released_payments_cannot_be_released() {
     let pending = client.submit_payment(&from, &to, &beneficiary, &asset, &(THRESHOLD * 2));
     client.reject_payment(&admin, &pending, &String::from_str(&env, "not allowed"));
     assert!(client.try_release_payment(&admin, &pending, &String::from_str(&env, "override")).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Multi-admin approval flow (#7)
+// ---------------------------------------------------------------------------
+
+/// Returns a second admin address that has been added to the contract.
+fn add_second_admin(env: &Env, client: &ComplyRailContractClient, admin: &Address) -> Address {
+    let admin2 = Address::generate(env);
+    client.add_admin(admin, &admin2);
+    admin2
+}
+
+#[test]
+fn test_set_registry_frozen_single_admin_executes_immediately() {
+    let (_env, client, admin) = setup();
+
+    // Default threshold is 1, so freeze is immediate.
+    client.set_registry_frozen(&admin, &true);
+    assert!(client.is_registry_frozen());
+    client.set_registry_frozen(&admin, &false);
+    assert!(!client.is_registry_frozen());
+}
+
+#[test]
+fn test_set_approval_threshold_single_admin_executes_immediately() {
+    let (env, client, admin) = setup();
+    // Add a second admin first so threshold-2 is reachable.
+    add_second_admin(&env, &client, &admin);
+
+    client.set_approval_threshold(&admin, &2);
+    assert_eq!(client.get_approval_threshold(), 2);
+}
+
+#[test]
+fn test_freeze_requires_second_approval_when_threshold_is_2() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    // Raise the threshold to 2.
+    client.set_approval_threshold(&admin, &2);
+
+    // Proposing a freeze should NOT take effect immediately.
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+    assert!(!client.is_registry_frozen(), "registry must not be frozen after a single approval");
+
+    // Second admin approves — now the action executes.
+    let executed = client.approve_action(&admin2, &proposal_id);
+    assert!(executed, "approve_action should return true when threshold is reached");
+    assert!(client.is_registry_frozen(), "registry must be frozen after the second approval");
+}
+
+#[test]
+fn test_unfreeze_requires_second_approval_when_threshold_is_2() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    // Freeze immediately while threshold is still 1.
+    client.set_registry_frozen(&admin, &true);
+    assert!(client.is_registry_frozen());
+
+    // Raise the threshold to 2.
+    client.set_approval_threshold(&admin, &2);
+
+    // Propose an unfreeze — should not execute yet.
+    let proposal_id = client.set_registry_frozen(&admin, &false);
+    assert!(client.is_registry_frozen(), "registry must still be frozen after one approval");
+
+    // Second admin approves.
+    client.approve_action(&admin2, &proposal_id);
+    assert!(!client.is_registry_frozen(), "registry must be unfrozen after the second approval");
+}
+
+#[test]
+fn test_change_threshold_via_proposal_when_threshold_is_2() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    // Raise threshold to 2.
+    client.set_approval_threshold(&admin, &2);
+
+    // Propose changing it back to 1 — requires 2 approvals.
+    let proposal_id = client.set_approval_threshold(&admin, &1);
+    assert_eq!(client.get_approval_threshold(), 2, "threshold must still be 2 after one approval");
+
+    // Second admin approves.
+    client.approve_action(&admin2, &proposal_id);
+    assert_eq!(client.get_approval_threshold(), 1, "threshold must be 1 after both admins approve");
+}
+
+#[test]
+fn test_approve_returns_false_when_below_threshold() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+    let admin3 = Address::generate(&env);
+    client.add_admin(&admin, &admin3);
+
+    // Raise threshold to 3.
+    client.set_approval_threshold(&admin, &3);
+
+    // Propose a freeze.
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+    assert!(!client.is_registry_frozen());
+
+    // Second approval — still below threshold.
+    let executed = client.approve_action(&admin2, &proposal_id);
+    assert!(!executed, "approve_action should return false when threshold is not yet reached");
+    assert!(!client.is_registry_frozen());
+
+    // Third approval — threshold reached.
+    let executed = client.approve_action(&admin3, &proposal_id);
+    assert!(executed);
+    assert!(client.is_registry_frozen());
+}
+
+#[test]
+fn test_double_vote_is_rejected() {
+    let (env, client, admin) = setup();
+    add_second_admin(&env, &client, &admin);
+
+    // Raise threshold to 2.
+    client.set_approval_threshold(&admin, &2);
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+
+    // The proposer (admin) has already voted; voting again must fail.
+    let result = client.try_approve_action(&admin, &proposal_id);
+    assert!(result.is_err(), "double-voting on a proposal must be rejected");
+    assert!(!client.is_registry_frozen());
+}
+
+#[test]
+fn test_approve_on_already_executed_proposal_is_rejected() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    // Raise threshold to 2.
+    client.set_approval_threshold(&admin, &2);
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+
+    // Execute the proposal.
+    client.approve_action(&admin2, &proposal_id);
+    assert!(client.is_registry_frozen());
+
+    // A third admin tries to approve an already-executed proposal.
+    let admin3 = Address::generate(&env);
+    client.add_admin(&admin, &admin3);
+    let result = client.try_approve_action(&admin3, &proposal_id);
+    assert!(result.is_err(), "approving an already-executed proposal must fail");
+}
+
+#[test]
+fn test_non_admin_cannot_approve_proposal() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    client.set_approval_threshold(&admin, &2);
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+
+    // A random non-admin tries to push the proposal over the threshold.
+    let outsider = Address::generate(&env);
+    let _ = admin2; // silence unused warning
+    let result = client.try_approve_action(&outsider, &proposal_id);
+    assert!(result.is_err(), "non-admin must not be able to approve a proposal");
+    assert!(!client.is_registry_frozen());
+}
+
+#[test]
+fn test_approve_on_unknown_proposal_returns_error() {
+    let (_env, client, admin) = setup();
+    let result = client.try_approve_action(&admin, &9999u32);
+    assert!(result.is_err(), "approving a non-existent proposal must return an error");
+}
+
+#[test]
+fn test_propose_action_explicit_api() {
+    let (env, client, admin) = setup();
+    let admin2 = add_second_admin(&env, &client, &admin);
+
+    client.set_approval_threshold(&admin, &2);
+
+    // Use the explicit propose_action entry point.
+    let proposal_id = client.propose_action(&admin, &ProposalKind::FreezeRegistry);
+    assert!(!client.is_registry_frozen());
+
+    client.approve_action(&admin2, &proposal_id);
+    assert!(client.is_registry_frozen());
+}
+
+#[test]
+fn test_get_proposal_returns_state() {
+    let (env, client, admin) = setup();
+    add_second_admin(&env, &client, &admin);
+
+    client.set_approval_threshold(&admin, &2);
+    let proposal_id = client.set_registry_frozen(&admin, &true);
+
+    let proposal = client.get_proposal(&proposal_id).expect("proposal must exist");
+    assert_eq!(proposal.kind, ProposalKind::FreezeRegistry);
+    assert_eq!(proposal.approvals.len(), 1);
+    assert!(!proposal.executed);
+}
+
+#[test]
+fn test_get_approval_threshold_returns_stored_value() {
+    let (env, client, admin) = setup();
+    add_second_admin(&env, &client, &admin);
+
+    assert_eq!(client.get_approval_threshold(), 1);
+    client.set_approval_threshold(&admin, &2);
+    assert_eq!(client.get_approval_threshold(), 2);
 }
 

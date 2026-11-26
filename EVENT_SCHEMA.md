@@ -29,22 +29,77 @@ data:  GBXXX...  (the new admin's Stellar address)
 
 ### `appr_th`
 
-Emitted when the minimum-approval threshold is updated.
+Emitted when the minimum-approval threshold is updated (immediately when `min_appr == 1`, or via a proposal when `min_appr > 1`).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | topic | `(Symbol("appr_th"),)` | |
-| data | `i32` | The new threshold value |
+| data | `(i32, i32)` | Tuple of (previous threshold, new threshold) |
 
 **Example:**
 ```
 topic: ["appr_th"]
-data:  2
+data:  (1, 2)
 ```
 
-**Trigger:** `set_approval_threshold(caller, threshold)` — requires `caller` to be an admin and `threshold > 0`.
+**Trigger:** `set_approval_threshold(caller, threshold)` executes this event when the action takes effect (immediately or after enough proposal approvals).
 
-> **Note:** The threshold value is stored on-chain but is not currently enforced on individual operations. See README current limitations.
+---
+
+### `prop_new`
+
+Emitted when a new multi-admin proposal is created.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topic | `(Symbol("prop_new"),)` | |
+| data | `(u32, Address)` | Tuple of (proposal ID, proposer address) |
+
+**Example:**
+```
+topic: ["prop_new"]
+data:  (0, GBXXX...)
+```
+
+**Trigger:** `set_registry_frozen` or `set_approval_threshold` when `min_appr > 1`, or an explicit call to `propose_action`.
+
+---
+
+### `prop_apr`
+
+Emitted when an admin adds an approval to a proposal that has not yet reached threshold.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topic | `(Symbol("prop_apr"),)` | |
+| data | `(u32, Address, u32)` | Tuple of (proposal ID, approver address, current approval count) |
+
+**Example:**
+```
+topic: ["prop_apr"]
+data:  (0, GCYYY..., 2)
+```
+
+**Trigger:** `approve_action(caller, proposal_id)` when approval count after this vote is still below `min_appr`.
+
+---
+
+### `prop_exe`
+
+Emitted when a proposal reaches the approval threshold and executes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topic | `(Symbol("prop_exe"),)` | |
+| data | `(u32, Address)` | Tuple of (proposal ID, final approver address) |
+
+**Example:**
+```
+topic: ["prop_exe"]
+data:  (0, GCYYY...)
+```
+
+**Trigger:** `approve_action(caller, proposal_id)` when the approval count meets `min_appr`.
 
 ---
 
@@ -202,7 +257,18 @@ data:  ("0100000000000000...", "VASP failed KYC")
 
 ## Error Codes
 
-The contract uses `assert!` panics rather than typed error codes. The table below maps each panic message to its trigger condition.
+The contract exposes typed errors via `ComplyError` (returned by fallible functions) and `assert!` panics for precondition failures.
+
+### Typed errors (`ComplyError`)
+
+| Code | Variant | Returned by | Meaning |
+|------|---------|-------------|---------|
+| 1 | `VaspNotFound` | `get_vasp` | No entry for the given VASP address |
+| 2 | `ProposalNotFound` | `approve_action` | No proposal with the given ID |
+| 3 | `AlreadyApproved` | `approve_action` | Caller already voted on this proposal |
+| 4 | `ProposalAlreadyExecuted` | `approve_action` | Proposal has already been executed |
+
+### Panic messages
 
 | Panic message | Function | Trigger condition |
 |---|---|---|
